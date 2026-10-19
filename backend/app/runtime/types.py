@@ -35,6 +35,7 @@ class ModelConfig:
     context_window: int = 128000
     price_input: float = 0.0
     price_output: float = 0.0
+    protocol: str = "anthropic_messages"  # 第五期：openai_chat 兼容协议
 
     def cost_of(self, usage: Usage) -> float:
         return (
@@ -102,6 +103,13 @@ class EvReported:
 
 
 @dataclass
+class EvSessionBound:
+    """执行器会话已建立（第五期：会话恢复依据 attempt.executor_session_id）。"""
+
+    session_id: str
+
+
+@dataclass
 class EvCrashed:
     error: str
     last_output: str = ""
@@ -120,6 +128,7 @@ ExecEvent = (
     | EvToolStarted
     | EvToolFinished
     | EvReported
+    | EvSessionBound
     | EvCrashed
     | EvTimedOut
 )
@@ -163,6 +172,8 @@ class RunContext:
     executor: str = "lite"
     entry_command: str | None = None
     pause_event: object | None = None  # asyncio.Event；set=允许继续（暂停门）
+    # 第五期：会话恢复——自动重试尝试携带源尝试的 executor_session_id
+    resume_session_id: str | None = None
     # --- 第二期：工具库（§8、§9）---
     agent_id: str = ""
     tool_defs: list[ToolDef] = field(default_factory=list)

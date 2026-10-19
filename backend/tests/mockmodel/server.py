@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -274,7 +275,143 @@ def create_mock_app(state: MockModel) -> FastAPI:
             _sse_stream(response, step), media_type="text/event-stream"
         )
 
+    # --- 第五期：OpenAI 兼容端点（openai_chat 协议链路验证）---
+    @app.post("/v1/chat/completions")
+    async def chat_completions(request: Request) -> Any:
+        body = await request.json()
+        try:
+            step = state.next_step(_openai_to_internal(body))
+        except RuntimeError as e:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"message": str(e), "type": "invalid_request_error"}},
+            )
+        if step.error_status:
+            return JSONResponse(
+                status_code=step.error_status,
+                content={"error": {"message": f"mock error {step.error_status}"}},
+            )
+        if step.stream_delay:
+            time.sleep(step.stream_delay)  # noqa: ASYNC251
+
+        response = build_step_openai_response(step, str(body.get("model") or "mock-model"))
+        if not body.get("stream"):
+            return response
+        return StreamingResponse(
+            _openai_sse_stream(response, step), media_type="text/event-stream"
+        )
+
     return app
+
+
+def _openai_to_internal(body: dict[str, Any]) -> dict[str, Any]:
+    """openai chat 请求 → 内部（anthropic 风格）请求，供剧本匹配与步骤消费。"""
+    system_parts: list[str] = []
+    messages: list[dict[str, Any]] = []
+    for m in body.get("messages") or []:
+        role = str(m.get("role") or "user")
+        if role == "system":
+            system_parts.append(str(m.get("content") or ""))
+        elif role == "tool":
+            messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": str(m.get("tool_call_id") or ""),
+                    "content": str(m.get("content") or ""),
+                }],
+            })
+        elif role == "assistant" and m.get("tool_calls"):
+            blocks: list[dict[str, Any]] = []
+            if m.get("content"):
+                blocks.append({"type": "text", "text": str(m["content"])})
+            for tc in m["tool_calls"]:
+                fn = dict(tc.get("function") or {})
+                try:
+                    inp = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    inp = {}
+                blocks.append({
+                    "type": "tool_use",
+                    "id": str(tc.get("id") or ""),
+                    "name": str(fn.get("name") or ""),
+                    "input": inp,
+                })
+            messages.append({"role": "assistant", "content": blocks})
+        else:
+            messages.append({"role": role, "content": m.get("content") or ""})
+    tools = [
+        {"name": str((t.get("function") or {}).get("name") or "")}
+        for t in body.get("tools") or []
+    ]
+    return {"system": "\n".join(system_parts), "messages": messages, "tools": tools}
+
+
+_OPENAI_FINISH_MAP = {"tool_use": "tool_calls", "max_tokens": "length", "end_turn": "stop"}
+
+
+def build_step_openai_response(step: Step, model: str) -> dict[str, Any]:
+    """把步骤转换为 OpenAI chat.completion 响应 JSON。"""
+    message: dict[str, Any] = {"role": "assistant", "content": step.text or None}
+    if step.tool_calls:
+        message["tool_calls"] = [
+            {
+                "id": f"call_mock_{uuid.uuid4().hex[:8]}",
+                "type": "function",
+                "function": {
+                    "name": str(c.get("name")),
+                    "arguments": json.dumps(c.get("input") or {}, ensure_ascii=False),
+                },
+            }
+            for c in step.tool_calls
+        ]
+    raw_stop = step.stop_reason or ("tool_use" if step.tool_calls else "end_turn")
+    finish = _OPENAI_FINISH_MAP.get(raw_stop, "stop")
+    return {
+        "id": f"chatcmpl_mock_{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+        "usage": {
+            "prompt_tokens": step.usage.get("input_tokens", 120),
+            "completion_tokens": step.usage.get("output_tokens", 80),
+        },
+    }
+
+
+async def _openai_sse_stream(response: dict[str, Any], step: Step):
+    """chat.completion.chunk SSE 流：文本分片 → 工具调用分片 → finish → usage → [DONE]。"""
+    choice = response["choices"][0]
+
+    def _data(payload: dict[str, Any]) -> bytes:
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+    yield _data({"id": response["id"], "object": "chat.completion.chunk",
+                 "created": response["created"], "model": response["model"],
+                 "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]})
+    text = str(choice["message"].get("content") or "")
+    chunk_size = max(1, len(text) // 3) or 1
+    for pos in range(0, len(text), chunk_size):
+        await asyncio.sleep(0.01)
+        yield _data({"choices": [{"index": 0,
+                                  "delta": {"content": text[pos : pos + chunk_size]},
+                                  "finish_reason": None}]})
+    for i, tc in enumerate(choice["message"].get("tool_calls") or []):
+        arguments = tc["function"]["arguments"]
+        mid = max(1, len(arguments) // 2)
+        for part in (arguments[:mid], arguments[mid:]):
+            if part:
+                yield _data({"choices": [{"index": 0, "finish_reason": None, "delta": {
+                    "tool_calls": [{
+                        "index": i, "id": tc["id"], "type": "function",
+                        "function": {"name": tc["function"]["name"], "arguments": part},
+                    }]
+                }}]})
+    yield _data({"choices": [{"index": 0, "delta": {},
+                              "finish_reason": choice["finish_reason"]}]})
+    yield _data({"choices": [], "usage": response["usage"]})
+    yield b"data: [DONE]\n\n"
 
 
 async def _sse_stream(response: dict[str, Any], step: Step):

@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import deque
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +32,7 @@ from app.runtime.types import (
     EvOutputDelta,
     EvOutputTurn,
     EvReported,
+    EvSessionBound,
     EvThinking,
     EvTimedOut,
     EvToolFinished,
@@ -56,6 +60,11 @@ def _external_error_retry_delay() -> float:
     return float(getattr(get_config(), "external_error_retry_delay", 30.0))
 
 
+def _now() -> float:
+    """熔断时间源（测试可替换）。"""
+    return time.monotonic()
+
+
 class Scheduler:
     def __init__(
         self,
@@ -78,6 +87,11 @@ class Scheduler:
         self._pause_events: dict[str, asyncio.Event] = {}  # run_id → gate（set=允许执行）
         self._retry_timers: dict[str, asyncio.Task[None]] = {}  # task_id → 定时重试
         self._schedule_lock = asyncio.Lock()
+        # 熔断（第五期增强）：窗口内连续崩溃 → 开闸暂停调度，冷却后自动合闸
+        self._crash_times: deque[float] = deque()
+        self._circuit_opened_at: float | None = None
+        # 日成本限额（第五期增强）：超限当日只告警一次
+        self._daily_limit_notice: date | None = None
 
     # ------------------------------------------------------------------
     # 状态查询
@@ -115,13 +129,79 @@ class Scheduler:
                 self._running.pop(attempt_id, None)
 
     # ------------------------------------------------------------------
+    # 熔断（第五期增强）
+    # ------------------------------------------------------------------
+    @property
+    def circuit_open(self) -> bool:
+        if self._circuit_opened_at is None:
+            return False
+        return _now() - self._circuit_opened_at < get_config().circuit_breaker_cooldown_seconds
+
+    async def _circuit_gate(self) -> bool:
+        """调度闸门：开闸期间拒绝启动新尝试；冷却期满自动合闸并广播恢复。"""
+        if self._circuit_opened_at is None:
+            return True
+        cooldown = get_config().circuit_breaker_cooldown_seconds
+        if _now() - self._circuit_opened_at < cooldown:
+            return False
+        logger.warning("熔断冷却结束（%.0fs），自动恢复调度", cooldown)
+        self._circuit_opened_at = None
+        self._crash_times.clear()
+        async with db_session() as session:
+            await self.events.emit(
+                session,
+                type="engine.recovered",
+                actor="system",
+                run_id=None,
+                payload={"detail": f"熔断冷却 {cooldown:.0f}s 结束，自动恢复调度"},
+            )
+        return True
+
+    async def _record_crash(self) -> None:
+        """窗口内尝试崩溃计数达到阈值 → 开闸熔断（engine.circuit_open）。"""
+        cfg = get_config()
+        now = _now()
+        self._crash_times.append(now)
+        window = cfg.circuit_breaker_window_seconds
+        while self._crash_times and now - self._crash_times[0] > window:
+            self._crash_times.popleft()
+        if self._circuit_opened_at is not None:
+            return
+        if len(self._crash_times) < cfg.circuit_breaker_crashes:
+            return
+        self._circuit_opened_at = now
+        self._crash_times.clear()
+        detail = (
+            f"{cfg.circuit_breaker_crashes} 次尝试在 {window:.0f}s 内崩溃，"
+            f"熔断 {cfg.circuit_breaker_cooldown_seconds:.0f}s"
+        )
+        logger.warning("引擎熔断开启：%s", detail)
+        async with db_session() as session:
+            await self.events.emit(
+                session,
+                type="engine.circuit_open",
+                actor="system",
+                run_id=None,
+                payload={"detail": detail},
+            )
+
+    # ------------------------------------------------------------------
     # 调度
     # ------------------------------------------------------------------
     async def schedule(self) -> None:
         """扫描全部 queued 尝试，在三级限额内启动（串行化防并发重复启动）。"""
+        if not await self._circuit_gate():
+            return
         async with self._schedule_lock:
             async with db_session() as session:
                 settings = await self.settings.get(session)
+                # 日成本限额（第五期增强）：当日累计成本超限 → 不再启动新尝试
+                daily_limit = settings.get("daily_cost_limit")
+                if daily_limit is not None and float(daily_limit) > 0:
+                    spend = await self._daily_spend(session)
+                    if spend >= float(daily_limit):
+                        await self._notify_daily_limit(session, spend)
+                        return
                 stmt = (
                     select(Attempt, Task)
                     .join(Task, Attempt.task_id == Task.id)
@@ -169,6 +249,33 @@ class Scheduler:
                     running_per_run[task.run_id] = running_per_run.get(task.run_id, 0) + 1
                     running_per_agent[agent.id] = running_per_agent.get(agent.id, 0) + 1
 
+    async def _daily_spend(self, session: Any) -> float:
+        """当日（UTC）已启动尝试的累计成本（attempt.usage.cost 之和）。"""
+        day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        result = await session.execute(
+            select(Attempt.usage).where(Attempt.started_at >= day_start)
+        )
+        spend = 0.0
+        for (usage,) in result.all():
+            if usage:
+                spend += float(usage.get("cost") or 0)
+        return spend
+
+    async def _notify_daily_limit(self, session: Any, spend: float) -> None:
+        """超限当日只发一次 budget.exceeded(level=daily) 全局事件。"""
+        today = utcnow().date()
+        if self._daily_limit_notice == today:
+            return
+        self._daily_limit_notice = today
+        logger.warning("日成本限额已超：当日累计 %.4f，暂停启动新尝试", spend)
+        await self.events.emit(
+            session,
+            type="budget.exceeded",
+            actor="system",
+            run_id=None,
+            payload={"level": "daily", "usage": {"cost": spend}},
+        )
+
     # ------------------------------------------------------------------
     # 尝试执行
     # ------------------------------------------------------------------
@@ -179,7 +286,11 @@ class Scheduler:
                 return
             executor = self.executors.get(ctx.executor)
             usage = Usage()
-            async for event in executor.start(ctx):
+            # 会话恢复优先（第五期）：resume 返回 None 表示执行器无法续跑，回退 start
+            iterator = executor.resume(ctx) if ctx.resume_session_id else None
+            if iterator is None:
+                iterator = executor.start(ctx)
+            async for event in iterator:
                 usage = await self._translate_event(ctx, event, usage)
         except asyncio.CancelledError:
             await self._mark_cancelled(attempt_id)
@@ -301,6 +412,12 @@ class Scheduler:
 
             gate = self._pause_events.setdefault(run.id, asyncio.Event())
             gate.set()
+            # 第五期会话恢复：自动重试尝试继承源尝试的执行器会话 ID
+            resume_session_id: str | None = None
+            if attempt.auto_retry_of:
+                source = await session.get(Attempt, attempt.auto_retry_of)
+                if source is not None:
+                    resume_session_id = source.executor_session_id
             ctx = RunContext(
                 run_id=run.id,
                 task_key=task.key,
@@ -320,6 +437,7 @@ class Scheduler:
                 masker=masker,
                 tool_gate=self._tool_gate,
                 allow_custom_python=bool(settings_snapshot.get("allow_custom_python_tools")),
+                resume_session_id=resume_session_id,
             )
             return ctx
 
@@ -469,6 +587,12 @@ class Scheduler:
                 )
         elif isinstance(event, EvReported):
             await self._handle_reported(ctx, event.report)
+        elif isinstance(event, EvSessionBound):
+            # 第五期会话恢复：执行器报告会话 ID，落库 attempt.executor_session_id
+            async with db_session() as session:
+                attempt = await session.get(Attempt, ctx.attempt_id)
+                if attempt is not None:
+                    attempt.executor_session_id = event.session_id
         elif isinstance(event, (EvCrashed, EvTimedOut)):
             if isinstance(event, EvCrashed):
                 await self.handle_crashed_attempt(ctx.attempt_id, event.error, event.last_output)
@@ -542,6 +666,8 @@ class Scheduler:
             attempt.ended_at = utcnow()
             if usage_data:
                 attempt.usage = usage_data
+            # 有回报即系统健康：清空熔断崩溃窗口（第五期增强）
+            self._crash_times.clear()
 
             await self.events.emit(
                 session,
@@ -627,6 +753,7 @@ class Scheduler:
                     reason=f"尝试崩溃：{error[:100]}", actor="system",
                 )
 
+        await self._record_crash()
         if auto_retry:
             await self._schedule_auto_retry(
                 task_id=task.id, source_attempt_id=attempt_id, reason=f"崩溃自动重试: {error[:80]}"

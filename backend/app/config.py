@@ -39,6 +39,14 @@ class AppConfig(BaseSettings):
     # external_error 自动重试前等待（§5.7：等待 30 秒后重试一次）；测试调小
     external_error_retry_delay: float = 30.0
 
+    # 熔断（第五期增强）：窗口内 N 次尝试崩溃 → 暂停启动新尝试，冷却后自动恢复
+    circuit_breaker_crashes: int = 5
+    circuit_breaker_window_seconds: float = 300.0
+    circuit_breaker_cooldown_seconds: float = 300.0
+
+    # 工作目录清理巡检间隔（第五期增强；0=关闭，`platform gc` 仍可手动触发）
+    workspace_cleanup_interval_seconds: float = 3600.0
+
     # 模型调用重试（§9.5：429/5xx 指数退避 3 次）
     model_retry_delays: tuple[float, ...] = (1.0, 4.0, 16.0)
 

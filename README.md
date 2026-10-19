@@ -45,6 +45,7 @@ uv run uvicorn app.main:app --port 8000    # OpenAPI 文档: http://127.0.0.1:80
 ```
 platform init                       初始化数据库 + 预置 agent
 platform run "需求" [--auto-approve] 运行一次需求，终端打印事件流
+platform gc                         手动执行维护清理（过期工作目录，第五期）
 ```
 
 ## 第二期新增：执行引擎与工具库
@@ -163,6 +164,15 @@ Agent 注册表（版本/回滚/工具绑定）、工具库（注册/测试/发�
 单元 + E2E（编队运行含阶段引用试错）+ `test_phase4_ui_smoke.py` 真实进程 15 项 +
 前端剧本编辑器 vitest。
 
+第五期验收清单（§14.6）：SdkExecutor 会话恢复（自动重试凭
+`attempt.executor_session_id` + `options.resume` 续跑，EvSessionBound 落库）、
+`openai_chat` 双协议（`/chat/completions` 兼容实现 + 模拟模型双端点 + 模型页协议
+选择器 + 全链路 E2E）、引擎熔断（窗口崩溃计数 → `engine.circuit_open` 开闸 →
+冷却 `engine.recovered` 合闸，`/metrics` gauge）、日成本限额（`daily_cost_limit`
+超限停启 + 当日一次 `budget.exceeded(daily)`）、工作目录清理（
+`workspace_retention_days` 到期回收 + 活跃尝试保护 + `platform gc`）；单元 25 项 +
+第五期 E2E 2 项 + 三/四期冒烟回归，无 schema 迁移。
+
 ## 部署
 
 - Docker：`docker-compose.yml`（frontend: nginx + backend + PostgreSQL 16）
@@ -176,4 +186,4 @@ Agent 注册表（版本/回滚/工具绑定）、工具库（注册/测试/发�
 - [x] 第二期 执行引擎与工具库（SdkExecutor、MCP、Skills、审批链路）
 - [x] 第三期 完整界面（运行工作台 / 审批中心 / 注册表 / 设置 / 访问密码）
 - [x] 第四期 Agent 工厂与团队（工厂起草 / 会话编队 / 剧本骨架）
-- [ ] 第五期 增强功能
+- [x] 第五期 增强功能（会话恢复 / openai_chat 双协议 / 引擎熔断 / 日成本限额 / 工作目录清理）

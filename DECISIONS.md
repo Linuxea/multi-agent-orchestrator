@@ -6,6 +6,61 @@
 
 D-<期数>.<序号>，按开发顺序递增。
 
+## 第五期（增强功能）——设计与实现决策
+
+- **D-5.1 第五期范围重建**：规格书不在手边（占位见 docs/spec.md），沿用 D-4.1 的
+  契约线索法重建 §14.6 范围，扫出五处「契约已预留、实现未闭环」：
+  ① `sdk.py` 注释直指第五期的会话恢复（attempt.executor_session_id + options.resume）；
+  ② `ModelProtocol.openai_chat` 枚举注释「预留」（模型调用全链路仅 anthropic_messages）；
+  ③ §12.4 事件目录 55 项中唯一从未发射的 `engine.circuit_open`（熔断）；
+  ④ 设置项 `daily_cost_limit` 无任何消费点（日成本限额）；
+  ⑤ 设置项 `workspace_retention_days` 无任何消费点（工作目录保留清理）。
+  对照排除项：暂停/恢复、§5.7 自动重试、其余全部事件、三级并行上限、危险命令表、
+  custom_python 开关均已有实现。真机 Claude Code 冒烟仍属环境遗留（D-2.18），不入本期。
+- **D-5.2 会话恢复链路**：SdkExecutor.start 参数化为 `_run_session(ctx, resume_session_id)`；
+  `resume()` 为普通方法（对齐 Executor 协议，返回迭代器或 None），仅当 ctx.resume_session_id
+  非空时以 `options.resume` 续跑，否则调度器回退 start()。会话 ID 捕获自 ResultMessage /
+  SystemMessage 的 session_id（首次见到即发新事件 EvSessionBound），调度器翻译时落库
+  attempt.executor_session_id；`_materialize` 对 auto_retry_of 尝试继承源尝试的会话 ID
+  （正常派发/人工改派不继承）。LiteExecutor 维持 resume=None。无 schema 变更（列属一期）。
+- **D-5.3 openai_chat 双协议**：ModelConfig 增 protocol 字段（model_config_from_profile
+  透传）；ModelCaller 构造时按协议分派 `_OpenAIChatCaller`（httpx 直连 base_url +
+  /chat/completions，不引 openai 依赖），anthropic_messages 路径零改动。映射规则：
+  anthropic 线程 → openai messages（system 前置、thinking 块不外发、tool_use →
+  tool_calls、tool_result → role:tool 消息且紧跟对应 assistant 消息）；工具 schema
+  input_schema → function.parameters；停止原因 tool_calls→tool_use、length→max_tokens、
+  其余→end_turn；用量 prompt/completion_tokens（含 prompt_tokens_details.cached_tokens
+  容错）；流式 SSE 解析（content/reasoning_content 增量、tool_calls 按 index 拼接
+  arguments、stream_options.include_usage）；重试策略与 anthropic 路径一致（429/5xx/
+  连接错误，同 model_retry_delays）。API：POST/PATCH /model-profiles 接受 protocol；
+  前端模型页加协议选择器与「OpenAI 协议」徽章。模拟模型服务增 /v1/chat/completions
+  双协议端点（请求出站翻译 + openai 形态响应/流），供全链路与体检路由 E2E。
+- **D-5.4 引擎熔断**：调度器崩溃窗口计数（时间源 `_now()` 可替换）——窗口
+  （circuit_breaker_window_seconds，默认 300s）内尝试崩溃 ≥ 阈值（circuit_breaker_crashes，
+  默认 5）→ 开闸：schedule() 拒绝启动任何新尝试，发全局 `engine.circuit_open`（run_id=None，
+  事件目录最后一个未发射事件闭环）；attempt.reported（系统健康的证据）清零窗口；
+  冷却（circuit_breaker_cooldown_seconds，默认 300s）期满后自动合闸并发
+  `engine.recovered`（detail=熔断冷却结束）。配置走进程级 AppConfig（环境变量
+  PLATFORM_CIRCUIT_*），不入 §13.1 界面设置；可观测经 /metrics `platform_circuit_open`
+  gauge + 事件流「引擎熔断」标签。§5.7 自动重试不计入窗口（那是对 blocked 的受控重试）。
+- **D-5.5 日成本限额**：设置 daily_cost_limit（界面已有字段）首获消费点——schedule()
+  启动新尝试前统计当日（UTC）已启动尝试的 usage.cost 之和，超限即不再启动新尝试，
+  当日只发一次全局 `budget.exceeded`（level=daily，复用既有事件载荷）。存量运行中的
+  尝试不中断（其成本仍会累计，下次调度再拦）；用户调高限额或次日自动恢复。
+- **D-5.6 工作目录清理**：设置 workspace_retention_days（界面已有字段）首获消费点——
+  新增 app/maintenance.py `cleanup_workspaces()`：按尝试目录 mtime 到期整删，跳过
+  未终结尝试（queued/running/awaiting_approval）的目录，删除后修剪空的任务/运行父目录；
+  ≤0 视为关闭。接线两处：API 启动后台巡检（PLATFORM_WORKSPACE_CLEANUP_INTERVAL_SECONDS，
+  默认 3600s，0=关闭，停机取消任务）+ CLI `platform gc` 手动执行（输出 JSON 摘要）。
+  无事件（运维动作，日志即可）。
+- **D-5.7 第五期验收面**：单元 25 项新增——会话恢复（执行器续跑装配/无会话回退/
+  调度器落库/继承与不继承）+ openai 客户端（文本/工具/线程翻译/重试/400 不重试/流式
+  拼接）+ 熔断（阈值开闸/调度闸门/冷却合闸/回报清零）+ 日限额（超限停启+单次告警/
+  未超与关闭放行）+ 清理（到期删/活跃保护/空父修剪/开关）；E2E `test_phase5_openai.py`
+  2 项（openai_chat 全链路运行 completed + 体检路由四项全过）；第三期 16/16、第四期
+  15/15 冒烟回归通过；后端 122 通过 + 3 跳过，ruff/mypy strict（76 文件）干净；
+  前端 tsc+build/eslint/vitest 24 全绿。无 schema 迁移。
+
 ## 第四期（Agent 工厂与团队）——设计与实现决策
 
 - **D-4.1 第四期范围重建**：规格书不在手边，按第一期预留的契约线索重建 §14.5 范围——

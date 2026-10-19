@@ -28,6 +28,7 @@ def model_config_from_profile(profile: ModelProfile, api_key: str) -> ModelConfi
         context_window=profile.context_window,
         price_input=float(profile.price_input or 0),
         price_output=float(profile.price_output or 0),
+        protocol=profile.protocol.value,
     )
 
 

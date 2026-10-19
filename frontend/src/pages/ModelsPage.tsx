@@ -33,7 +33,7 @@ export function ModelsPage() {
     <div className="page">
       <div className="page-head">
         <h1>模型配置</h1>
-        <span className="page-sub">任意 Anthropic 兼容端点；密钥加密存储、接口不回明文</span>
+        <span className="page-sub">Anthropic 兼容或 OpenAI 兼容端点；密钥加密存储、接口不回明文</span>
         <button
           className="btn-primary btn-sm"
           style={{ marginLeft: "auto" }}
@@ -65,7 +65,12 @@ export function ModelsPage() {
                     {p.name}
                   </td>
                   <td className="mono">{p.model}</td>
-                  <td className="mono st-rationale">{p.base_url}</td>
+                  <td className="mono st-rationale">
+                    {p.base_url}{" "}
+                    {p.protocol === "openai_chat" ? (
+                      <span className="chip chip-dusk">OpenAI 协议</span>
+                    ) : null}
+                  </td>
                   <td className="mono">
                     {p.price_input}/{p.price_output}
                   </td>
@@ -161,6 +166,7 @@ function ModelEditor({
 }) {
   const isNew = profile === null;
   const [name, setName] = useState(profile?.name ?? "");
+  const [protocol, setProtocol] = useState(profile?.protocol ?? "anthropic_messages");
   const [baseUrl, setBaseUrl] = useState(profile?.base_url ?? "");
   const [model, setModel] = useState(profile?.model ?? "");
   const [apiKey, setApiKey] = useState("");
@@ -178,6 +184,7 @@ function ModelEditor({
     try {
       const body: Record<string, unknown> = {
         name,
+        protocol,
         base_url: baseUrl,
         model,
         max_output_tokens: Number(maxOutput),
@@ -212,12 +219,25 @@ function ModelEditor({
         </label>
       </div>
       <label className="field">
-        <span className="field-label">端点（Anthropic 兼容 base_url）</span>
+        <span className="field-label">协议</span>
+        <select value={protocol} onChange={(e) => setProtocol(e.target.value)}>
+          <option value="anthropic_messages">Anthropic Messages（/v1/messages）</option>
+          <option value="openai_chat">OpenAI 兼容（/v1/chat/completions）</option>
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">
+          端点 base_url（{protocol === "openai_chat" ? "如 https://api.openai.com/v1" : "Anthropic 兼容"}）
+        </span>
         <input
           className="code"
           type="text"
           value={baseUrl}
-          placeholder="https://api.deepseek.com/anthropic"
+          placeholder={
+            protocol === "openai_chat"
+              ? "https://api.openai.com/v1"
+              : "https://api.deepseek.com/anthropic"
+          }
           onChange={(e) => setBaseUrl(e.target.value)}
         />
       </label>

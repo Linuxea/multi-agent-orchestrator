@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -80,6 +82,30 @@ def create_app() -> FastAPI:
 
         await seed_initial_data(configured_mock_url())
 
+        # 第五期增强：过期工作目录定期清理（workspace_retention_days）
+        import asyncio
+
+        interval = get_config().workspace_cleanup_interval_seconds
+        if interval > 0:
+
+            async def _maintenance_loop() -> None:
+                while True:
+                    await asyncio.sleep(interval)
+                    try:
+                        from app.maintenance import cleanup_workspaces
+
+                        await cleanup_workspaces()
+                    except Exception:  # noqa: BLE001
+                        logging.getLogger(__name__).exception("工作目录清理巡检失败")
+
+            app.state.maintenance_task = asyncio.create_task(_maintenance_loop())
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        task = getattr(app.state, "maintenance_task", None)
+        if task is not None:
+            task.cancel()
+
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
@@ -96,11 +122,14 @@ def create_app() -> FastAPI:
         """Prometheus 文本格式（§13 可观测性，第一期为基础版）。"""
         container = get_container()
         running = len([t for t, _ in container.scheduler._running.values() if not t.done()])  # noqa: SLF001
+        circuit = 1 if container.scheduler.circuit_open else 0
         lines = [
             "# TYPE platform_running_attempts gauge",
             f"platform_running_attempts {running}",
             "# TYPE platform_event_bus_subscribers gauge",
             f"platform_event_bus_subscribers {len(container.bus._listeners)}",  # noqa: SLF001
+            "# TYPE platform_circuit_open gauge",
+            f"platform_circuit_open {circuit}",
         ]
         return "\n".join(lines) + "\n"
 

@@ -80,6 +80,7 @@ const EVENT_LABELS: Record<string, string> = {
   "decision.recorded": "决策记录",
   "engine.invalid_transition": "非法转换",
   "engine.recovered": "引擎恢复",
+  "engine.circuit_open": "引擎熔断",
   "config.settings_changed": "配置变更",
   "factory.generated": "工厂产出",
 };

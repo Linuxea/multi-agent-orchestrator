@@ -29,7 +29,10 @@
 - `helpers.py` 状态转换 + 决策记录 + 事件写入（同一事务）。
 - `scheduler.py` 三级并行上限调度（§5.10）、执行事件翻译为平台事件（§9.7，含脱敏）、
   崩溃/external_error 自动重试（不计入尝试次数）、工具门 `_tool_gate`
-  （§8.9 权限链 + §11 审批接入）、尝试物化（工作目录 + 工具上下文）。
+  （§8.9 权限链 + §11 审批接入）、尝试物化（工作目录 + 工具上下文）；
+  第五期：自动重试继承源尝试会话 ID（resume 优先）、窗口崩溃熔断
+  （`engine.circuit_open`/`engine.recovered` + 调度闸门）、日成本限额
+  （`daily_cost_limit` 超限停启 + `budget.exceeded(daily)`）。
 - `context.py` 运行状态摘要（§5.11）与主 agent 系统提示词（§15.1）；
   会话编队段（团队/成员/剧本阶段注入，第四期 D-4.4）。
 - `tools.py` 控制工具 JSON Schema（agent_slug 动态枚举）。
@@ -59,10 +62,14 @@
 - `lite.py` LiteExecutor：自写工具调用循环；submit_report + 绑定工具
   （经权限门 + Toolbox 执行）；预算兜底回报（§9.8、§5.4）。
 - `sdk.py` SdkExecutor：claude-agent-sdk 0.2.x 适配（选项装配、事件翻译、
-  can_use_tool 权限门、submit_report 进程内 MCP 服务、运行时可用性检测）。
+  can_use_tool 权限门、submit_report 进程内 MCP 服务、运行时可用性检测）；
+  第五期会话恢复：`resume()` 凭 attempt.executor_session_id 以 `options.resume`
+  续跑，ResultMessage/SystemMessage 的 session_id 经 EvSessionBound 落库。
 - `toolbox.py` 工具执行箱：MCP 惰性连接复用、custom_http、custom_python（受设置开关）。
 - `reporting.py` §5.4 兜底回报（预算耗尽 / 未提交回报）。
-- `model_client.py` anthropic SDK 封装：任意兼容端点、429/5xx 退避重试、流式（§9.5）。
+- `model_client.py` 双协议模型调用（§9.5 + 第五期）：anthropic_messages 走
+  anthropic SDK；openai_chat 走 `_OpenAIChatCaller`（httpx /chat/completions，
+  消息/工具/用量/停止原因映射、SSE 流式解析）；两路共用 429/5xx 退避重试。
 - `workspace.py` 工作目录物化与提示词四段拼装（§9.2、§9.4）。
 
 ## app/events —— 事件存储与总线（§5.9、§12.3）
@@ -77,6 +84,12 @@
   （现有花名册选成员 + 剧本阶段 + 能力缺口）；JSON 解析容忍代码块；
   每次生成发 factory.generated（全局通道）。模型解析链与编排器共享
   （`app/runtime/model_config.py`）。
+
+## app/maintenance —— 维护任务（第五期）
+
+`cleanup_workspaces()`：按设置 `workspace_retention_days` 到期回收尝试工作目录
+（mtime 判定、活跃尝试保护、空父目录修剪、≤0 关闭）；API 启动后台巡检
+（`PLATFORM_WORKSPACE_CLEANUP_INTERVAL_SECONDS`）+ CLI `platform gc` 手动触发。
 
 ## app/registry —— 注册表（§6）
 
@@ -94,13 +107,16 @@ agent/团队/模板 CRUD、版本快照（§4.2）、检索；`presets.py` 11 �
 
 ## tests —— 测试基础设施与用例（§14.1、§14.2、§14.3）
 
-- `mockmodel/` 剧本驱动的 Anthropic 兼容模拟模型（YAML 作用域+步骤）。
+- `mockmodel/` 剧本驱动的双协议模拟模型（YAML 作用域+步骤；
+  /v1/messages Anthropic 形态 + /v1/chat/completions OpenAI 形态，第五期 D-5.3）；
 - `mockmcp/` stdio/HTTP 模拟 MCP（echo/add/write_file/fail/slow_timeout）；
   已对照真实 MCP 客户端 SDK 验证（发现并修复 HTTP 端点注解缺陷，D-2.3）。
 - `fakesdk.py` 伪 claude-agent-sdk（SdkExecutor 单元测试）。
 - `scripts/multi_domain_research.yaml` 端到端剧本。
 - `unit/` 状态机、执行器（lite/sdk）、工作目录、权限链、密钥、MCP 客户端验证、
-  访问密码、Agent 工厂（起草/过滤/校验）；
+  访问密码、Agent 工厂（起草/过滤/校验）、第五期增强（会话恢复/熔断/日限额/
+  清理/openai 客户端）；
   `e2e/` 验收清单（第一期 §14.2 / 第二期 §14.3）、协调规则逐行测试、工具流与审批、
   界面链路冒烟（第三期，真实进程：dist 直出→种子→会话→计划批准→终态→WS→密码强制）；
-  团队编队（第四期：阶段校验/偏离记录/团队过滤）与其界面链路冒烟（工厂→编队→剧本映射）。
+  团队编队（第四期：阶段校验/偏离记录/团队过滤）与其界面链路冒烟（工厂→编队→剧本映射）；
+  openai_chat 全链路与体检（第五期 `test_phase5_openai.py`）。

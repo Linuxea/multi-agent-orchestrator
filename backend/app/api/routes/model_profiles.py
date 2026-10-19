@@ -20,6 +20,7 @@ class ModelProfileCreate(BaseModel):
     base_url: str
     model: str
     api_key: str = ""  # 直接写明文则自动转存 Secret
+    protocol: str = "anthropic_messages"  # 第五期：openai_chat 兼容协议
     max_output_tokens: int = 8192
     temperature: float | None = None
     thinking: str = "off"
@@ -88,7 +89,7 @@ async def create_profile(body: ModelProfileCreate) -> dict[str, Any]:
         profile = ModelProfile(
             id=new_id("mp"),
             name=body.name,
-            protocol=ModelProtocol.anthropic_messages,
+            protocol=ModelProtocol(body.protocol),
             base_url=body.base_url,
             api_key_secret_id=secret_id,
             model=body.model,
@@ -123,6 +124,14 @@ async def update_profile(profile_id: str, body: dict[str, Any]) -> dict[str, Any
         ):
             if field in body:
                 setattr(p, field, body[field])
+        if "protocol" in body:
+            from app.enums import ModelProtocol
+
+            p.protocol = ModelProtocol(str(body["protocol"]))
+        if "thinking" in body:
+            from app.enums import ThinkingMode
+
+            p.thinking = ThinkingMode(str(body["thinking"]))
         await session.flush()
         return _profile_out(p)
 

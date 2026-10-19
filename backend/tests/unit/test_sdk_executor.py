@@ -253,3 +253,67 @@ async def test_runtime_unavailable_crashes_clearly(monkeypatch: pytest.MonkeyPat
     events = await _collect(SdkExecutor(), ctx)
     assert events and isinstance(events[0], EvCrashed)
     assert "Claude Code CLI 不可用" in events[0].error
+
+
+# --- 第五期：会话恢复 ---
+async def test_start_emits_session_bound() -> None:
+    """ResultMessage 携带 session_id → EvSessionBound（供调度器落库）。"""
+    from app.runtime.types import EvSessionBound
+
+    ctx = _ctx()
+    executor = SdkExecutor()
+
+    async def inject() -> None:
+        import asyncio
+
+        while not F.LAST["clients"]:  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+        F.LAST["clients"][0].script = [
+            {"call_platform": {"status": "done", "summary": "完成", "attempted": ["x"]}},
+            F.result_msg(),
+        ]
+
+    import asyncio
+
+    task = asyncio.create_task(inject())
+    events = await _collect(executor, ctx)
+    await task
+    bound = [e for e in events if isinstance(e, EvSessionBound)]
+    assert bound and bound[0].session_id == "sess-fake"
+
+
+async def test_resume_passes_options_resume() -> None:
+    """resume() 以 ctx.resume_session_id 装配 options.resume 续跑。"""
+    from app.runtime.types import EvSessionBound
+
+    ctx = _ctx(resume_session_id="sess-prev")
+    executor = SdkExecutor()
+    iterator = executor.resume(ctx)
+    assert iterator is not None
+
+    async def inject() -> None:
+        import asyncio
+
+        while not F.LAST["clients"]:  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+        F.LAST["clients"][0].script = [
+            {"call_platform": {"status": "done", "summary": "续跑完成", "attempted": ["x"]}},
+            F.result_msg(session_id="sess-new"),
+        ]
+
+    import asyncio
+
+    task = asyncio.create_task(inject())
+    events = [ev async for ev in iterator]
+    await task
+
+    opts = F.LAST["clients"][0].options
+    assert getattr(opts, "resume", None) == "sess-prev"
+    assert [e for e in events if isinstance(e, EvReported)]
+    bound = [e for e in events if isinstance(e, EvSessionBound)]
+    assert bound and bound[0].session_id == "sess-new"
+
+
+async def test_resume_without_session_returns_none() -> None:
+    ctx = _ctx()  # 无 resume_session_id
+    assert SdkExecutor().resume(ctx) is None

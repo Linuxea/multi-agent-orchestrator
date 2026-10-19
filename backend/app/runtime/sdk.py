@@ -28,6 +28,7 @@ from app.runtime.types import (
     EvOutputDelta,
     EvOutputTurn,
     EvReported,
+    EvSessionBound,
     EvThinking,
     EvTimedOut,
     EvToolFinished,
@@ -146,6 +147,21 @@ class SdkExecutor:
 
     # ------------------------------------------------------------------
     async def start(self, ctx: RunContext) -> AsyncIterator[ExecEvent]:
+        async for event in self._run_session(ctx, resume_session_id=None):
+            yield event
+
+    def resume(self, ctx: RunContext) -> AsyncIterator[ExecEvent] | None:
+        """会话恢复（第五期）：自动重试尝试凭源尝试的 executor_session_id 续跑。
+
+        ctx.resume_session_id 为空表示无会话可续，返回 None 由调度器回退 start()。
+        """
+        if ctx.resume_session_id is None:
+            return None
+        return self._run_session(ctx, resume_session_id=ctx.resume_session_id)
+
+    async def _run_session(
+        self, ctx: RunContext, resume_session_id: str | None
+    ) -> AsyncIterator[ExecEvent]:
         try:
             sdk = _load_sdk()
         except Exception as e:  # noqa: BLE001
@@ -166,6 +182,15 @@ class SdkExecutor:
         captured: dict[str, Any] | None = None
         tool_names: dict[str, str] = {}
         budget_reminded = False
+        session_bound = False
+
+        async def _emit_session(msg: Any) -> AsyncIterator[ExecEvent]:
+            """ResultMessage / SystemMessage 携带 session_id 时产出 EvSessionBound。"""
+            nonlocal session_bound
+            sid = str(getattr(msg, "session_id", "") or "")
+            if sid and not session_bound:
+                session_bound = True
+                yield EvSessionBound(session_id=sid)
 
         # submit_report 进程内工具
         async def _submit_report(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -215,6 +240,8 @@ class SdkExecutor:
             max_turns=int(ctx.budget.max_turns or 24),
             include_partial_messages=True,
         )
+        if resume_session_id is not None:
+            options.resume = resume_session_id
         cli_path = os.environ.get("PLATFORM_CLAUDE_CLI_PATH", "")
         if cli_path:
             options.cli_path = cli_path
@@ -344,6 +371,8 @@ class SdkExecutor:
                     continue
 
                 if kind == "ResultMessage":
+                    async for ev in _emit_session(msg):
+                        yield ev
                     final_usage = _usage_from_dict(dict(getattr(msg, "usage", None) or {}))
                     if final_usage.input_tokens or final_usage.output_tokens:
                         usage.input_tokens = max(usage.input_tokens, final_usage.input_tokens)
@@ -376,7 +405,9 @@ class SdkExecutor:
                     yield EvReported(report=no_report_fallback(usage, usage.turns, last_output))
                     return
 
-                # SystemMessage / RateLimitEvent / 其他：忽略
+                # SystemMessage / RateLimitEvent / 其他：忽略（仅捕获 session_id）
+                async for ev in _emit_session(msg):
+                    yield ev
         finally:
             self._clients.pop(ctx.attempt_id, None)
             self._interrupted.discard(ctx.attempt_id)
@@ -395,10 +426,6 @@ class SdkExecutor:
         if client is not None:
             with contextlib.suppress(Exception):
                 await client.interrupt()
-
-    def resume(self, ctx: RunContext) -> AsyncIterator[ExecEvent] | None:
-        # 会话恢复（attempt.executor_session_id + options.resume）在第五期增强
-        return None
 
 
 async def _next_message(iterator: AsyncIterator[Any]) -> Any:

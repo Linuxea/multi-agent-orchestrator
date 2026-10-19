@@ -36,6 +36,17 @@ async def _demo_downgrade_executors() -> int:
     return await demo_downgrade_executors()
 
 
+async def _cmd_gc() -> None:
+    """执行一次维护清理（第五期：workspace_retention_days）。"""
+    from app.db import init_db
+
+    await init_db()
+    from app.maintenance import cleanup_workspaces
+
+    summary = await cleanup_workspaces()
+    print(json.dumps(summary, ensure_ascii=False))
+
+
 async def _cmd_init() -> None:
     await init_db()
     mock_url = _mock_url()
@@ -183,6 +194,7 @@ def main() -> None:
     run_parser.add_argument(
         "--auto-approve", action="store_true", help="自动确认计划（演示用）"
     )
+    sub.add_parser("gc", help="执行一次维护清理（过期工作目录）")
     args = parser.parse_args()
 
     _setup_logging(args.verbose)
@@ -190,6 +202,8 @@ def main() -> None:
         asyncio.run(_cmd_init())
     elif args.cmd == "run":
         sys.exit(asyncio.run(_cmd_run(args.request, args.auto_approve)))
+    elif args.cmd == "gc":
+        asyncio.run(_cmd_gc())
 
 
 if __name__ == "__main__":
