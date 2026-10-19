@@ -6,7 +6,50 @@
 
 D-<期数>.<序号>，按开发顺序递增。
 
-## 第三期（完整界面）——设计与实现决策
+## 第四期（Agent 工厂与团队）——设计与实现决策
+
+- **D-4.1 第四期范围重建**：规格书不在手边，按第一期预留的契约线索重建 §14.5 范围——
+  `AgentOrigin.factory` 枚举、`factory.generated` 事件载荷、`Session.default_team_id`、
+  `Task.playbook_stage_key`、`PlanProposedPayload.deviates_from_playbook`、
+  `search_agents/list_playbooks` 的 team 参数、TeamsPage「完整剧本编辑在第四期开放」注释。
+  落为两块：① Agent 工厂（模型起草 agent/团队定义）② 团队完整化（会话编队 +
+  剧本骨架 + 编排器团队感知 + 结构化剧本编辑器）。
+- **D-4.2 工厂语义：草稿不落库**：`POST /factory/agents`、`POST /factory/teams` 只产出
+  草稿（完整字段 + slug 可用性检查），用户在编辑器审阅修改后经既有创建接口保存；
+  agent 保存时携带 origin=factory（API 只接受 manual/factory，preset 保留给种子）。
+  理由：agent 定义含提示词/预算/权限面，属高风险配置，必须人审。每次成功生成发
+  factory.generated（全局通道 run_id=None，kind=agent_draft/team_draft + 输入输出摘要）。
+- **D-4.3 工厂模型链与解析**：起草用与主 agent 相同的模型解析链（设置 → 默认编排 →
+  库中首个，可显式传 model_profile_id），为此把解析逻辑抽到 `app/runtime/model_config.py`
+  共享（engine/scheduler/model_profiles.check 同步改引）。提示词要求仅输出 JSON；
+  解析容忍 markdown 代码块与前后杂文；slug 规范化（非法字符 slugify）+ 冲突检测
+  （slug_available=false 时附 slug_suggestion）。团队编队草稿只从现有 active agent
+  花名册选成员，花名册外 slug 剔除并记录 dropped_member_slugs + missing_capabilities。
+- **D-4.4 会话编队（default_team_id 生效）**：`POST/PATCH /sessions` 支持 default_team_id
+  （clear_team 解绑；绑定校验团队存在）。绑定后每次唤醒的运行状态摘要注入「编队」段：
+  团队名/描述/组长提示/成员清单（slug+名+描述+标签）/剧本阶段（key+名+目标+适合+依赖），
+  并附编队要求（优先成员、以剧本为骨架、偏离须在 rationale 说明）。
+- **D-4.5 剧本阶段 schema 规范化**：stage = {key, name, goal, agent_hint, depends_on}；
+  key 必填唯一、depends_on 只能引用已知 key、禁自依赖与成环（registry.
+  validate_playbook_stages，创建/更新/工厂共用）。propose_plan/revise_plan 新增任务可带
+  playbook_stage_key：绑定剧本时校验引用存在（不存在 → orchestrator.tool_rejected），
+  未绑定剧本时禁止填写；Task 落库与计划快照均带阶段；plan.proposed 载荷
+  deviates_from_playbook = 剧本中无任务映射的阶段 key（对齐 §5.6「偏离之处说明理由」）。
+- **D-4.6 编排器团队工具**：search_agents(team=slug) 改为返回该团队成员（按团队顺序，
+  仅限注册表内 active 者）；list_playbooks(team=slug) 只返回该团队绑定剧本；team 参数
+  同时接受 slug 或 id（find_team 回退）；团队不存在 → 控制工具拒绝。
+- **D-4.7 前端落地**：AgentsPage「工厂起草」抽屉（需求+执行器+起草模型）→ 草稿预填
+  编辑器（来源徽章 工厂/预置/手动；契约字段入表单）；TeamsPage 重写——结构化剧本阶段
+  编辑器（key/名/目标/适合/依赖 行编辑 + 排序 + JSON 切换）、「工厂编队」抽屉（草稿含
+  剔除成员与能力缺口提示）、删除团队/剧本；工作台输入区「编队」选择器（会话级，
+  PATCH 即时生效）；事件遥测加 factory.generated 标签。
+- **D-4.8 第四期验收面**：单元（工厂解析/成员过滤/slug 冲突/坏 JSON/阶段校验）+
+  E2E（编队运行：错误阶段被拒→修正→阶段落库→偏离记录→快照映射；团队过滤工具；
+  成员校验）+ 界面链路冒烟 `test_phase4_ui_smoke.py`（真实进程 dist：工厂起草→
+  origin=factory 保存→编队→绑定→待批批准→阶段/偏离/快照断言，15 项）；前端 vitest
+  增加剧本编辑器交互（保存编排/依赖拦截）。无 schema 变更（列均已在一期迁移中）。
+
+第三期（完整界面）——设计与实现决策
 
 - **D-3.1 前端栈与目录**：`frontend/` = React 19 + TypeScript(strict) + Vite + react-router 7；
   不引 UI 组件库，token 化手写 CSS（`src/styles/`）。UI 文案中文、代码英文 snake/camel 各随其主。

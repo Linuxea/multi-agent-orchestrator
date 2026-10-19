@@ -155,12 +155,16 @@ class RegistryService:
         member_agent_ids: list[str] | None = None, playbook_id: str | None = None,
         lead_hint: str = "",
     ) -> Team:
+        member_ids = member_agent_ids or []
+        missing = await self.missing_agents(session, member_ids)
+        if missing:
+            raise ValueError(f"成员 agent 不存在: {', '.join(missing)}")
         team = Team(
             id=new_id("team"),
             slug=slug,
             name=name,
             description=description,
-            member_agent_ids=member_agent_ids or [],
+            member_agent_ids=member_ids,
             playbook_id=playbook_id,
             lead_hint=lead_hint,
         )
@@ -168,9 +172,36 @@ class RegistryService:
         await session.flush()
         return team
 
+    async def get_team(self, session: AsyncSession, team_id: str) -> Team | None:
+        return await session.get(Team, team_id)
+
     async def get_team_by_slug(self, session: AsyncSession, slug: str) -> Team | None:
         result = await session.execute(select(Team).where(Team.slug == slug))
         return result.scalar_one_or_none()
+
+    async def find_team(self, session: AsyncSession, slug_or_id: str) -> Team | None:
+        """按 slug 或 id 定位团队（编排器工具的 team 参数语义）。"""
+        team = await self.get_team_by_slug(session, slug_or_id)
+        if team is None:
+            team = await self.get_team(session, slug_or_id)
+        return team
+
+    async def missing_agents(
+        self, session: AsyncSession, agent_ids: list[str]
+    ) -> list[str]:
+        """返回不存在的 agent id 列表（成员校验用）。"""
+        if not agent_ids:
+            return []
+        result = await session.execute(select(Agent.id).where(Agent.id.in_(agent_ids)))
+        known = set(result.scalars().all())
+        return [aid for aid in agent_ids if aid not in known]
+
+    def resolve_team_members(
+        self, team: Team, active_agents: list[Agent]
+    ) -> list[Agent]:
+        """团队成员中仍在注册表内且状态可用的 agent（按团队顺序）。"""
+        by_id = {a.id: a for a in active_agents}
+        return [by_id[aid] for aid in team.member_agent_ids if aid in by_id]
 
     async def list_teams(self, session: AsyncSession) -> list[Team]:
         result = await session.execute(select(Team).order_by(Team.created_at))
@@ -201,3 +232,57 @@ class RegistryService:
 
 def tags_list(tags: list[str] | None) -> list[str]:
     return [t.strip() for t in (tags or []) if t.strip()]
+
+
+# 剧本阶段的规范字段（D-4.5）：key 必填且唯一；depends_on 引用已知 key。
+STAGE_FIELDS: tuple[str, ...] = ("key", "name", "goal", "agent_hint", "depends_on")
+
+
+def validate_playbook_stages(stages: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """校验并规范化剧本 stages；非法时抛 ValueError（消息可直接展示）。"""
+    normalized: list[dict[str, Any]] = []
+    keys: set[str] = set()
+    for i, raw in enumerate(stages or []):
+        if not isinstance(raw, dict):
+            raise ValueError(f"第 {i + 1} 个阶段不是对象")
+        stage = {k: v for k, v in raw.items() if k in STAGE_FIELDS}
+        key = str(stage.get("key") or "").strip()
+        if not key:
+            raise ValueError(f"第 {i + 1} 个阶段缺少 key")
+        if key in keys:
+            raise ValueError(f"阶段 key 重复: {key}")
+        keys.add(key)
+        stage["key"] = key
+        stage["name"] = str(stage.get("name") or key)
+        stage["goal"] = str(stage.get("goal") or "")
+        stage["agent_hint"] = str(stage.get("agent_hint") or "")
+        deps = stage.get("depends_on") or []
+        if not isinstance(deps, list):
+            raise ValueError(f"阶段 {key} 的 depends_on 必须是数组")
+        stage["depends_on"] = [str(d) for d in deps]
+        normalized.append(stage)
+    for stage in normalized:
+        for dep in stage["depends_on"]:
+            if dep not in keys:
+                raise ValueError(f"阶段 {stage['key']} 依赖了不存在的阶段: {dep}")
+            if dep == stage["key"]:
+                raise ValueError(f"阶段 {stage['key']} 不能依赖自身")
+    # 依赖成环检测（DFS）
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in visited:
+            return
+        if node in visiting:
+            raise ValueError(f"阶段依赖存在环: {node}")
+        visiting.add(node)
+        stage = next(s for s in normalized if s["key"] == node)
+        for dep in stage["depends_on"]:
+            visit(dep)
+        visiting.discard(node)
+        visited.add(node)
+
+    for stage in normalized:
+        visit(stage["key"])
+    return normalized

@@ -7,6 +7,8 @@ import type {
   ApprovalRow,
   ArtifactRow,
   DecisionRow,
+  FactoryAgentDraft,
+  FactoryTeamDraft,
   MessageInfo,
   ModelCheckResult,
   ModelProfileRow,
@@ -31,7 +33,10 @@ export const authApi = {
 
 export const sessionApi = {
   list: () => api<SessionInfo[]>("/sessions"),
-  create: (title: string) => api<SessionInfo>("/sessions", jsonBody({ title })),
+  create: (title: string, defaultTeamId?: string | null) =>
+    api<SessionInfo>("/sessions", jsonBody({ title, default_team_id: defaultTeamId ?? null })),
+  patch: (id: string, changes: { title?: string; default_team_id?: string; clear_team?: boolean }) =>
+    api<SessionInfo>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify(changes) }),
   remove: (id: string) => api<void>(`/sessions/${id}`, { method: "DELETE" }),
   messages: (id: string) => api<MessageInfo[]>(`/sessions/${id}/messages`),
   runs: (id: string) => api<RunListItem[]>(`/sessions/${id}/runs`),
@@ -195,6 +200,18 @@ export const teamApi = {
     id: string,
     data: { name: string; trigger_hint: string; stages: Record<string, unknown>[] },
   ) => api<{ id: string; name: string }>(`/teams/${id}/playbook`, jsonBody(data)),
+  removePlaybook: (id: string) =>
+    api<void>(`/teams/${id}/playbook`, { method: "DELETE" }),
+};
+
+export const factoryApi = {
+  draftAgent: (requirement: string, executor: string, modelProfileId?: string | null) =>
+    api<FactoryAgentDraft>(
+      "/factory/agents",
+      jsonBody({ requirement, executor, model_profile_id: modelProfileId ?? null }),
+    ),
+  draftTeam: (requirement: string) =>
+    api<FactoryTeamDraft>("/factory/teams", jsonBody({ requirement })),
 };
 
 export const artifactApi = {

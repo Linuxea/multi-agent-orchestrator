@@ -195,6 +195,8 @@ export interface AgentRow {
   system_prompt: string;
   executor: "sdk" | "lite";
   model_profile_id: string;
+  input_contract: string;
+  output_contract: string;
   default_budget: Budget | null;
   max_concurrency: number;
   status: AgentStatus;
@@ -266,6 +268,14 @@ export interface SecretRow {
   last_used_at: string | null;
 }
 
+export interface PlaybookStage {
+  key: string;
+  name: string;
+  goal?: string;
+  agent_hint?: string;
+  depends_on?: string[];
+}
+
 export interface TeamRow {
   id: string;
   slug: string;
@@ -278,8 +288,38 @@ export interface TeamRow {
     id: string;
     name: string;
     trigger_hint: string;
-    stages: Record<string, unknown>[];
+    stages: PlaybookStage[];
   } | null;
+}
+
+export interface FactoryAgentDraft {
+  slug: string;
+  name: string;
+  description: string;
+  role_detail: string;
+  capability_tags: string[];
+  system_prompt: string;
+  input_contract: string;
+  output_contract: string;
+  default_budget: Record<string, number>;
+  avatar: string | null;
+  executor: string;
+  slug_available: boolean;
+  slug_suggestion?: string;
+}
+
+export interface FactoryTeamDraft {
+  slug: string;
+  name: string;
+  description: string;
+  lead_hint: string;
+  member_agent_ids: string[];
+  member_slugs: string[];
+  dropped_member_slugs: string[];
+  missing_capabilities: string[];
+  playbook: { name: string; trigger_hint: string; stages: PlaybookStage[] };
+  slug_available: boolean;
+  slug_suggestion?: string;
 }
 
 export interface ArtifactRow {

@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Agent, Decision, Run, Task
+from app.models import Agent, Decision, Playbook, Run, Session, Task, Team
 from app.schemas.common import Budget, Usage
 
 STATUS_ZH: dict[str, str] = {
@@ -34,6 +34,10 @@ async def build_run_digest(
     """构造每次唤醒的"运行状态摘要"：需求、计划、最近决策、剩余预算。"""
     user_request = await _trigger_request(session, run)
     lines: list[str] = ["## 用户原始需求", "", user_request or "（见对话）", ""]
+
+    team_section = await build_team_section(session, run.session_id)
+    if team_section:
+        lines += [team_section]
 
     lines += ["## 当前计划（任务状态）", ""]
     for t in sorted(tasks, key=lambda x: x.key):
@@ -77,6 +81,71 @@ async def _trigger_request(session: AsyncSession, run: Run) -> str:
     return msg.content if msg else ""
 
 
+async def build_team_section(session: AsyncSession, session_id: str) -> str:
+    """会话绑定默认团队时，构造编队提示段（成员 + 组长提示 + 剧本骨架）。"""
+    sess = await session.get(Session, session_id)
+    if sess is None or not sess.default_team_id:
+        return ""
+    team = await session.get(Team, sess.default_team_id)
+    if team is None:
+        return ""
+    result = await session.execute(select(Agent))
+    by_id = {a.id: a for a in result.scalars().all()}
+    members = [by_id[aid] for aid in team.member_agent_ids if aid in by_id]
+    if not members:
+        return ""
+
+    lines = [
+        "## 编队（用户为本会话指定的团队）",
+        "",
+        f"- 团队：{team.name}（{team.slug}）"
+        + (f"｜{team.description}" if team.description else ""),
+    ]
+    if team.lead_hint:
+        lines.append(f"- 组长提示：{team.lead_hint}")
+    lines += ["- 成员："] + [
+        f"  - {a.slug}「{a.name}」｜{a.description}｜标签 {','.join(a.capability_tags) or '无'}"
+        for a in members
+    ]
+
+    playbook = (
+        await session.get(Playbook, team.playbook_id) if team.playbook_id else None
+    )
+    if playbook is not None and playbook.stages:
+        lines += ["- 剧本（以阶段 key 引用，任务可带 playbook_stage_key 对应）："]
+        for st in playbook.stages:
+            if not isinstance(st, dict) or not st.get("key"):
+                continue
+            dep = f"，依赖 {','.join(st.get('depends_on') or [])}" if st.get("depends_on") else ""
+            hint = f"（适合：{st['agent_hint']}）" if st.get("agent_hint") else ""
+            lines.append(f"  - {st['key']}「{st.get('name') or st['key']}」{st.get('goal') or ''}{hint}{dep}")
+    lines += [
+        "",
+        "编队要求：优先从上述成员中选人；匹配剧本时以阶段为骨架（任务填写对应 playbook_stage_key），"
+        "偏离编队或剧本之处必须在 rationale 中说明。",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+async def session_team(session: AsyncSession, session_id: str) -> tuple[Team, Playbook | None] | None:
+    """会话绑定的团队与其剧本（无绑定或团队已删时返回 None）。"""
+    sess = await session.get(Session, session_id)
+    if sess is None or not sess.default_team_id:
+        return None
+    team = await session.get(Team, sess.default_team_id)
+    if team is None:
+        return None
+    playbook = await session.get(Playbook, team.playbook_id) if team.playbook_id else None
+    return team, playbook
+
+
+def playbook_stage_keys(playbook: Playbook | None) -> list[str]:
+    if playbook is None or not playbook.stages:
+        return []
+    return [str(st.get("key")) for st in playbook.stages if isinstance(st, dict) and st.get("key")]
+
+
 async def _recent_decisions(session: AsyncSession, run_id: str) -> list[Decision]:
     stmt = (
         select(Decision)
@@ -109,6 +178,7 @@ ORCHESTRATOR_PROMPT_TEMPLATE = """你是一个多 agent 协作平台的主管。
 2. 用 search_agents / get_agent / list_playbooks 了解可用人手，只能指派其中状态为可用的 agent。
 3. 制定计划：把需求拆成目标明确、可验收的任务，标明依赖；能并行的尽量并行。
    需求匹配某个团队模板时，以模板为骨架，偏离之处说明理由。
+   会话已指定编队且剧本列出了阶段时，任务填写对应 playbook_stage_key。
 4. 为每个任务写任务单：目标、筛选过的背景、输入交付物、约束、验收标准、交付要求、选人理由。
 5. 收到回报后先读交付物再复核，逐条对照验收标准给出结论。
 6. 按协调规则处理受阻和失败（见下表），不要原样重派给同一个已失败的 agent。

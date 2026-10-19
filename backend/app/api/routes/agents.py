@@ -31,6 +31,7 @@ class AgentCreate(BaseModel):
     avatar: str | None = None
     input_contract: str = ""
     output_contract: str = ""
+    origin: str = "manual"  # manual / factory；preset 保留给种子（§6）
 
 
 class AgentUpdate(BaseModel):
@@ -62,6 +63,8 @@ def _agent_out(a: Agent) -> dict[str, Any]:
         "system_prompt": a.system_prompt,
         "executor": a.executor.value,
         "model_profile_id": a.model_profile_id,
+        "input_contract": a.input_contract,
+        "output_contract": a.output_contract,
         "default_budget": a.default_budget,
         "max_concurrency": a.max_concurrency,
         "status": a.status.value,
@@ -85,6 +88,8 @@ async def list_agents(status: str | None = None) -> list[dict[str, Any]]:
 @router.post("/agents", status_code=201)
 async def create_agent(body: AgentCreate) -> dict[str, Any]:
     container = get_container()
+    if body.origin not in ("manual", "factory"):
+        raise HTTPException(400, "origin 仅允许 manual / factory（preset 由种子创建）")
     async with db_session() as session:
         existing = await container.registry.get_agent_by_slug(session, body.slug)
         if existing is not None:
@@ -102,7 +107,7 @@ async def create_agent(body: AgentCreate) -> dict[str, Any]:
             default_budget=body.default_budget,
             max_concurrency=body.max_concurrency,
             status=body.status,
-            origin="manual",
+            origin=body.origin,
             avatar=body.avatar,
             input_contract=body.input_contract,
             output_contract=body.output_contract,

@@ -199,7 +199,7 @@ class Scheduler:
             logger.exception("重新调度失败")
 
     async def _model_config_for_agent(self, session: Any, agent: Agent) -> Any:
-        from app.orchestrator.engine import _model_config_from_profile
+        from app.runtime.model_config import model_config_from_profile
 
         profile = await session.get(ModelProfile, agent.model_profile_id)
         if profile is None:
@@ -221,7 +221,7 @@ class Scheduler:
                     api_key = secrets_util.decrypt(secret.encrypted_value)
                 except ValueError:
                     api_key = ""
-        return _model_config_from_profile(profile, api_key)
+        return model_config_from_profile(profile, api_key)
 
     async def _materialize(self, attempt_id: str) -> RunContext | None:
         """物化运行上下文（§9.3）。"""

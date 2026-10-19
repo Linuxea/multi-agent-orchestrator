@@ -140,8 +140,8 @@ async def check_profile(profile_id: str) -> dict[str, Any]:
     """模型兼容性体检（§9.6）：基础对话/流式/工具调用/用量四项 + 时延。"""
     import time as _time
 
-    from app.orchestrator.engine import _model_config_from_profile
     from app.runtime.model_client import ModelCaller, ModelError
+    from app.runtime.model_config import model_config_from_profile
     from app.runtime.types import ContentBlock
 
     async with db_session() as session:
@@ -159,7 +159,7 @@ async def check_profile(profile_id: str) -> dict[str, Any]:
                     api_key = secrets_util.decrypt(secret.encrypted_value)
                 except ValueError:
                     api_key = ""
-        cfg = _model_config_from_profile(p, api_key)
+        cfg = model_config_from_profile(p, api_key)
 
     caller = ModelCaller(cfg)
     checks: list[dict[str, Any]] = []

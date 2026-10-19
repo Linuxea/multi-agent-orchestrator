@@ -8,6 +8,7 @@ from typing import Any
 from app.artifacts.repo import ArtifactRepository
 from app.events.bus import EventBus
 from app.events.service import EventService
+from app.factory.service import FactoryService
 from app.orchestrator.engine import CoordinationEngine
 from app.orchestrator.scheduler import Scheduler
 from app.registry.service import RegistryService
@@ -104,6 +105,7 @@ class Container:
         self.engine = CoordinationEngine(self.events, self.registry, self.settings)
         self.engine.scheduler = self.scheduler
         self.scheduler.engine = self.engine
+        self.factory = FactoryService(self.events, self.registry, self.settings)
 
     async def recover(self) -> None:
         await self.engine.recover()

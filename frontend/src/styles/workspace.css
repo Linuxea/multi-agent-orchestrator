@@ -450,6 +450,56 @@
   color: var(--ink-faint);
 }
 
+.composer-team {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+}
+
+.composer-team select {
+  background: var(--bg-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: var(--fs-xs);
+  padding: 2px 6px;
+  max-width: 180px;
+}
+
+/* ---------- 剧本阶段编辑器 / 工厂草稿 ---------- */
+
+.stage-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stage-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg-1);
+}
+
+.stage-row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.factory-note {
+  font-size: var(--fs-xs);
+  color: var(--ink-dim);
+  background: color-mix(in srgb, var(--c-dusk) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-dusk) 35%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
 /* ---------- 任务抽屉 ---------- */
 
 .task-actions {

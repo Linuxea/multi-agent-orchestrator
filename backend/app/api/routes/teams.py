@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.bootstrap import get_container
 from app.models import Playbook, Team
 from app.orchestrator.helpers import db_session
+from app.registry.service import validate_playbook_stages
 
 router = APIRouter(tags=["teams"])
 
@@ -63,15 +64,24 @@ async def create_team(body: TeamCreate) -> dict[str, Any]:
         existing = await container.registry.get_team_by_slug(session, body.slug)
         if existing is not None:
             raise HTTPException(409, f"slug 已存在: {body.slug}")
-        t = await container.registry.create_team(
-            session,
-            slug=body.slug,
-            name=body.name,
-            description=body.description,
-            member_agent_ids=body.member_agent_ids,
-            lead_hint=body.lead_hint,
-        )
+        try:
+            t = await container.registry.create_team(
+                session,
+                slug=body.slug,
+                name=body.name,
+                description=body.description,
+                member_agent_ids=body.member_agent_ids,
+                lead_hint=body.lead_hint,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         return _team_out(t)
+
+
+async def _validate_members(container: Any, session: Any, member_ids: list[str]) -> None:
+    missing = await container.registry.missing_agents(session, member_ids)
+    if missing:
+        raise HTTPException(400, f"成员 agent 不存在: {', '.join(missing)}")
 
 
 @router.get("/teams/{team_id}")
@@ -86,10 +96,13 @@ async def get_team(team_id: str) -> dict[str, Any]:
 
 @router.patch("/teams/{team_id}")
 async def update_team(team_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    container = get_container()
     async with db_session() as session:
         t = await session.get(Team, team_id)
         if t is None:
             raise HTTPException(404, "team 不存在")
+        if "member_agent_ids" in body:
+            await _validate_members(container, session, list(body["member_agent_ids"] or []))
         for field in ("name", "description", "member_agent_ids", "lead_hint", "playbook_id"):
             if field in body:
                 setattr(t, field, body[field])
@@ -115,6 +128,10 @@ class PlaybookBody(BaseModel):
 @router.put("/teams/{team_id}/playbook", status_code=201)
 async def set_playbook(team_id: str, body: PlaybookBody) -> dict[str, Any]:
     container = get_container()
+    try:
+        stages = validate_playbook_stages(body.stages)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     async with db_session() as session:
         t = await session.get(Team, team_id)
         if t is None:
@@ -124,12 +141,26 @@ async def set_playbook(team_id: str, body: PlaybookBody) -> dict[str, Any]:
             if pb is not None:
                 pb.name = body.name
                 pb.trigger_hint = body.trigger_hint
-                pb.stages = body.stages
+                pb.stages = stages
                 await session.flush()
                 return {"id": pb.id, "name": pb.name, "stages": pb.stages}
         pb = await container.registry.create_playbook(
-            session, name=body.name, trigger_hint=body.trigger_hint, stages=body.stages
+            session, name=body.name, trigger_hint=body.trigger_hint, stages=stages
         )
         t.playbook_id = pb.id
         await session.flush()
         return {"id": pb.id, "name": pb.name, "stages": pb.stages}
+
+
+@router.delete("/teams/{team_id}/playbook", status_code=204)
+async def delete_playbook(team_id: str) -> None:
+    """解除团队的剧本绑定并删除剧本实体。"""
+    async with db_session() as session:
+        t = await session.get(Team, team_id)
+        if t is None:
+            raise HTTPException(404, "team 不存在")
+        if t.playbook_id:
+            pb = await session.get(Playbook, t.playbook_id)
+            t.playbook_id = None
+            if pb is not None:
+                await session.delete(pb)

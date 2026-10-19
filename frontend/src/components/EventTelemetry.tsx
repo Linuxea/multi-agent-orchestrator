@@ -81,6 +81,7 @@ const EVENT_LABELS: Record<string, string> = {
   "engine.invalid_transition": "非法转换",
   "engine.recovered": "引擎恢复",
   "config.settings_changed": "配置变更",
+  "factory.generated": "工厂产出",
 };
 
 export function eventLabel(type: string): string {

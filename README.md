@@ -105,6 +105,19 @@ npm test          # vitest：WS 协议/REST 客户端/时间线组装/审批交�
 npx eslint src
 ```
 
+### 第四期新增：Agent 工厂与团队
+
+- **Agent 工厂**（`app/factory/`，`POST /factory/agents|teams`）：描述需求 → 模型起草
+  完整 agent 定义（提示词/职责/标签/预算/契约）或团队编队（从现有 agent 花名册选成员 +
+  剧本阶段骨架 + 能力缺口清单）。草稿不落库，编辑器审阅后保存（agent 以 origin=factory
+  留痕）；每次生成发 `factory.generated` 事件（全局通道，审计可查）。
+- **会话编队**：工作台输入区可为会话绑定默认团队；绑定后协调者每次唤醒都能看到
+  「编队」段（成员清单 + 组长提示 + 剧本阶段），优先从成员中选人、以剧本为骨架
+  （任务带 playbook_stage_key），偏离记入 plan.proposed 的 deviates_from_playbook。
+- **剧本（playbook）结构化**：阶段 = key/目标/适合/依赖；前端行编辑器 + JSON 切换，
+  后端校验（key 唯一、依赖存在、无环）；编排器 `search_agents(team=)`、
+  `list_playbooks(team=)` 按团队过滤。
+
 ## 真实 Claude Code 运行时冒烟（可选）
 
 ```bash
@@ -119,6 +132,7 @@ export PLATFORM_CLAUDE_CLI_PATH=$(which claude)
 cd backend
 uv run pytest                     # 全部自动化测试（模拟模型 + 模拟 MCP，无需密钥）
 uv run python -m tests.e2e.test_phase3_ui_smoke   # 界面链路冒烟（真实进程 + dist + WS）
+uv run python -m tests.e2e.test_phase4_ui_smoke   # 第四期链路冒烟（工厂/编队/剧本映射）
 uv run ruff check app tests       # 代码风格
 uv run mypy app                   # strict 类型检查
 DEEPSEEK_API_KEY=sk-... uv run pytest -m real_model   # 真实模型冒烟（可选）
@@ -142,6 +156,13 @@ Agent 注册表（版本/回滚/工具绑定）、工具库（注册/测试/发�
 登录门与密钥失效回退；`tests/e2e/test_phase3_ui_smoke.py` 以真实进程走通
 静态服务→种子→会话→计划批准→终态→事件补发→WS→密码强制全链路（16 项）。
 
+第四期验收清单（§14.5）：Agent 工厂（起草→人审→origin=factory 落库，
+`factory.generated` 留痕）、团队完整化（会话编队、剧本阶段校验、
+`deviates_from_playbook` 偏离记录、任务 `playbook_stage_key` 落库、
+编排器 team 过滤工具）、结构化剧本编辑器与工厂编队界面；
+单元 + E2E（编队运行含阶段引用试错）+ `test_phase4_ui_smoke.py` 真实进程 15 项 +
+前端剧本编辑器 vitest。
+
 ## 部署
 
 - Docker：`docker-compose.yml`（frontend: nginx + backend + PostgreSQL 16）
@@ -154,5 +175,5 @@ Agent 注册表（版本/回滚/工具绑定）、工具库（注册/测试/发�
 - [x] 第一期 协调引擎骨架
 - [x] 第二期 执行引擎与工具库（SdkExecutor、MCP、Skills、审批链路）
 - [x] 第三期 完整界面（运行工作台 / 审批中心 / 注册表 / 设置 / 访问密码）
-- [ ] 第四期 Agent 工厂与团队
+- [x] 第四期 Agent 工厂与团队（工厂起草 / 会话编队 / 剧本骨架）
 - [ ] 第五期 增强功能

@@ -36,6 +36,13 @@ class SessionOut(BaseModel):
 
 class SessionCreate(BaseModel):
     title: str = "新会话"
+    default_team_id: str | None = None
+
+
+class SessionPatch(BaseModel):
+    title: str | None = None
+    default_team_id: str | None = None
+    clear_team: bool = False  # default_team_id 与 clear_team 同时给出时以 clear 为准
 
 
 class MessageOut(BaseModel):
@@ -57,8 +64,33 @@ async def list_sessions() -> list[SessionOut]:
 @router.post("/sessions", response_model=SessionOut, status_code=201)
 async def create_session(body: SessionCreate) -> SessionOut:
     async with db_session() as session:
-        s = Session(id=new_id("sess"), title=body.title)
+        if body.default_team_id:
+            team = await get_container().registry.get_team(session, body.default_team_id)
+            if team is None:
+                raise HTTPException(404, "团队不存在")
+        s = Session(id=new_id("sess"), title=body.title,
+                    default_team_id=body.default_team_id)
         session.add(s)
+        await session.flush()
+        return SessionOut.from_entity(s)
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionOut)
+async def patch_session(session_id: str, body: SessionPatch) -> SessionOut:
+    """更新会话（标题 / 默认编队）。clear_team=true 解除编队。"""
+    async with db_session() as session:
+        s = await session.get(Session, session_id)
+        if s is None:
+            raise HTTPException(404, "session 不存在")
+        if body.title is not None:
+            s.title = body.title
+        if body.clear_team:
+            s.default_team_id = None
+        elif body.default_team_id is not None:
+            team = await get_container().registry.get_team(session, body.default_team_id)
+            if team is None:
+                raise HTTPException(404, "团队不存在")
+            s.default_team_id = team.id
         await session.flush()
         return SessionOut.from_entity(s)
 

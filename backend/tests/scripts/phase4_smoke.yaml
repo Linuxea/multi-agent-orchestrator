@@ -1,0 +1,140 @@
+# 第四期界面链路冒烟剧本：工厂起草（agent/团队）+ 编队运行
+# 作用域：Agent 工厂 / 团队工厂 / 编队协调者（含阶段引用试错）/ 调研员 / 撰稿人
+scopes:
+  - match:
+      system_contains: "Agent 工厂"
+    steps:
+      - text: |
+          {"slug": "market-scout", "name": "市场侦察", "description": "快速扫描市场格局并产出要点",
+           "role_detail": "擅长：桌面调研。\n不做：付费数据。", "capability_tags": ["research", "market"],
+           "system_prompt": "你是市场侦察员。快速核实来源，产出要点清单。",
+           "input_contract": "一句需求", "output_contract": "Markdown 要点",
+           "default_budget": {"max_turns": 20, "max_cost": 0.5, "max_wall_seconds": 900},
+           "avatar": "🛰️"}
+  - match:
+      system_contains: "团队工厂"
+    steps:
+      - text: |
+          {"slug": "brief-squad", "name": "简报小队", "description": "调研加成稿",
+           "member_slugs": ["web-researcher", "writer"], "lead_hint": "调研员牵头",
+           "missing_capabilities": ["设计"],
+           "playbook": {"name": "简报剧本", "trigger_hint": "写简报", "stages": [
+             {"key": "S1", "name": "调研", "goal": "收集来源", "agent_hint": "web-researcher", "depends_on": []},
+             {"key": "S2", "name": "成稿", "goal": "写简报", "agent_hint": "writer", "depends_on": ["S1"]},
+             {"key": "S3", "name": "审校", "goal": "质量把关", "agent_hint": "editor-reviewer", "depends_on": ["S2"]}]}}
+  - match:
+      system_contains: "编队"
+    steps:
+      - tool_calls:
+          - name: propose_plan
+            input:
+              rationale: "按剧本 S1→S2 骨架排计划；S3 审校本轮不需要，记为偏离"
+              tasks:
+                - key: T1
+                  title: 市场调研
+                  agent_slug: web-researcher
+                  playbook_stage_key: S1
+                  acceptance_criteria: ["给出 2 个带来源的结论"]
+                - key: T2
+                  title: 撰写简报
+                  agent_slug: writer
+                  depends_on: [T1]
+                  playbook_stage_key: S2
+                  acceptance_criteria: ["简报结构完整"]
+      - text: "计划已提交。"
+      - tool_calls:
+          - name: dispatch
+            input:
+              rationale: "调研先行"
+              task_key: T1
+              agent_slug: web-researcher
+              objective: 调研市场并给出带来源结论
+              context: 用户需要一份简报
+              acceptance_criteria: ["给出 2 个带来源的结论"]
+              deliverable_format: markdown
+              deliverable_name: research.md
+              selection_rationale: 调研员擅长带来源调研
+      - text: "T1 已派发。"
+      - tool_calls:
+          - name: read_artifact
+            input:
+              rationale: "复核前先读交付物"
+              task_key: T1
+              mode: summary
+          - name: review
+            input:
+              rationale: "逐条核对验收标准"
+              task_key: T1
+              review:
+                verdict: pass
+                criteria:
+                  - {criterion: "给出 2 个带来源的结论", result: pass}
+      - text: "T1 复核通过。"
+      - tool_calls:
+          - name: dispatch
+            input:
+              rationale: "调研就绪，进入成稿阶段"
+              task_key: T2
+              agent_slug: writer
+              objective: 基于调研撰写简报
+              context: 上游已有调研交付物
+              inputs:
+                - artifact_id: "{{artifact:T1}}"
+                  usage: 调研结论
+              acceptance_criteria: ["简报结构完整"]
+              deliverable_format: markdown
+              deliverable_name: brief.md
+              selection_rationale: 撰稿人擅长成稿
+      - text: "T2 已派发。"
+      - tool_calls:
+          - name: read_artifact
+            input:
+              rationale: "复核前先读交付物"
+              task_key: T2
+              mode: summary
+          - name: review
+            input:
+              rationale: "逐条核对验收标准"
+              task_key: T2
+              review:
+                verdict: pass
+                criteria:
+                  - {criterion: "简报结构完整", result: pass}
+      - text: "T2 复核通过。"
+      - tool_calls:
+          - name: finalize
+            input:
+              rationale: "全部任务已采纳（S3 审校记入偏离）"
+              answer: "简报已完成，引用 [T1][T2]。"
+              citations:
+                - {task_key: T1}
+                - {task_key: T2}
+              gaps: ""
+      - text: "汇总完成。"
+  - match:
+      system_contains: "调研员"
+    steps:
+      - tool_calls:
+          - name: submit_report
+            input:
+              status: done
+              summary: "完成调研：2 个带来源结论"
+              deliverables:
+                - {name: research.md, content: "# 调研\n\n结论 1/2（均含来源）", summary: "调研结论"}
+              criteria_self_check:
+                - {criterion: "给出 2 个带来源的结论", met: true}
+              evidence: ["https://example.com/a"]
+              attempted: ["检索示例来源"]
+  - match:
+      system_contains: "撰稿人"
+    steps:
+      - tool_calls:
+          - name: submit_report
+            input:
+              status: done
+              summary: "简报已按调研结论成稿"
+              deliverables:
+                - {name: brief.md, content: "# 简报\n\n基于调研的两条结论展开。", summary: "简报正文"}
+              criteria_self_check:
+                - {criterion: "简报结构完整", met: true}
+              attempted: ["引用上游调研"]

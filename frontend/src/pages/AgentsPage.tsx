@@ -1,18 +1,26 @@
-/** Agent 注册表：列表 + 创建/编辑抽屉 + 版本回滚 + 工具绑定。 */
+/** Agent 注册表：列表 + 创建/编辑抽屉 + 工厂起草 + 版本回滚 + 工具绑定。 */
 
 import { useEffect, useState } from "react";
-import { agentApi, modelApi, toolApi } from "../api/endpoints";
-import type { AgentRow, AgentVersionRow, ModelProfileRow, ToolBinding, ToolRow } from "../api/types";
+import { agentApi, factoryApi, modelApi, toolApi } from "../api/endpoints";
+import type { AgentRow, AgentVersionRow, FactoryAgentDraft, ModelProfileRow, ToolBinding, ToolRow } from "../api/types";
 import { Drawer } from "../components/Drawer";
 import { StatusChip } from "../components/StatusChip";
 import { useApp } from "../state/app";
 import { useAsync } from "../state/useAsync";
+
+const ORIGIN_LABEL: Record<string, string> = {
+  preset: "预置",
+  manual: "手动",
+  factory: "工厂",
+};
 
 export function AgentsPage() {
   const { apiError } = useApp();
   const agentsAsync = useAsync(() => agentApi.list(), []);
   const modelsAsync = useAsync(() => modelApi.list(), []);
   const [editing, setEditing] = useState<AgentRow | "new" | null>(null);
+  const [prefill, setPrefill] = useState<FactoryAgentDraft | null>(null);
+  const [factoryOpen, setFactoryOpen] = useState(false);
 
   const agents = agentsAsync.data ?? [];
   const models = modelsAsync.data ?? [];
@@ -25,10 +33,21 @@ export function AgentsPage() {
         <h1>Agent 注册表</h1>
         <span className="page-sub">{agents.length} 个 agent · 修改会生成新版本快照</span>
         <button
-          className="btn-primary btn-sm"
+          className="btn-sm"
           style={{ marginLeft: "auto" }}
           disabled={models.length === 0}
-          onClick={() => setEditing("new")}
+          onClick={() => setFactoryOpen(true)}
+          title="描述需求，由模型起草完整 agent 定义，审阅后保存"
+        >
+          ⚙ 工厂起草
+        </button>
+        <button
+          className="btn-primary btn-sm"
+          disabled={models.length === 0}
+          onClick={() => {
+            setPrefill(null);
+            setEditing("new");
+          }}
         >
           + 新建 agent
         </button>
@@ -51,7 +70,10 @@ export function AgentsPage() {
           <tbody>
             {agents.map((a) => (
               <tr key={a.id} className="clickable" onClick={() => setEditing(a)}>
-                <td>{a.name}</td>
+                <td>
+                  {a.avatar ? <span aria-hidden>{a.avatar} </span> : null}
+                  {a.name}
+                </td>
                 <td className="mono">{a.slug}</td>
                 <td className="mono">{a.executor}</td>
                 <td>{modelName(a.model_profile_id)}</td>
@@ -60,7 +82,11 @@ export function AgentsPage() {
                   <StatusChip kind="tool" status={AGENT_STATUS_MAP[a.status] ?? "untested"} />
                 </td>
                 <td className="mono">v{a.version}</td>
-                <td className="mono">{a.origin}</td>
+                <td>
+                  <span className={`chip${a.origin === "factory" ? " chip-dusk" : " chip-ash"}`}>
+                    {ORIGIN_LABEL[a.origin] ?? a.origin}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -68,19 +94,114 @@ export function AgentsPage() {
         {agents.length === 0 ? <div className="empty">尚无 agent</div> : null}
       </div>
 
+      {factoryOpen ? (
+        <FactoryAgentDrawer
+          models={models}
+          onClose={() => setFactoryOpen(false)}
+          onDrafted={(draft) => {
+            setFactoryOpen(false);
+            setPrefill(draft);
+            setEditing("new");
+          }}
+          onError={apiError}
+        />
+      ) : null}
+
       {editing ? (
         <AgentEditor
           agent={editing === "new" ? null : editing}
+          prefill={editing === "new" ? prefill : null}
           models={models}
-          onClose={() => setEditing(null)}
+          onClose={() => {
+            setEditing(null);
+            setPrefill(null);
+          }}
           onSaved={() => {
             setEditing(null);
+            setPrefill(null);
             agentsAsync.reload();
           }}
           onError={apiError}
         />
       ) : null}
     </div>
+  );
+}
+
+function FactoryAgentDrawer({
+  models,
+  onClose,
+  onDrafted,
+  onError,
+}: {
+  models: ModelProfileRow[];
+  onClose: () => void;
+  onDrafted: (draft: FactoryAgentDraft) => void;
+  onError: (e: unknown) => void;
+}) {
+  const [requirement, setRequirement] = useState("");
+  const [executor, setExecutor] = useState("lite");
+  const [modelProfileId, setModelProfileId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const draft = async () => {
+    setBusy(true);
+    try {
+      const result = await factoryApi.draftAgent(
+        requirement.trim(),
+        executor,
+        modelProfileId || null,
+      );
+      onDrafted(result);
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Drawer title="工厂起草 agent" onClose={onClose}>
+      <p className="page-sub" style={{ marginTop: 0 }}>
+        描述你需要的能力，模型起草完整定义（提示词 / 职责 / 标签 / 预算），生成后进入编辑器审阅再保存。
+      </p>
+      <label className="field">
+        <span className="field-label">需求描述</span>
+        <textarea
+          rows={4}
+          placeholder="例如：需要一个能检索行业报告并做摘要的调研 agent，重点是来源可靠"
+          value={requirement}
+          onChange={(e) => setRequirement(e.target.value)}
+        />
+      </label>
+      <div className="form-row">
+        <label className="field">
+          <span className="field-label">执行器</span>
+          <select value={executor} onChange={(e) => setExecutor(e.target.value)}>
+            <option value="lite">lite（内置循环）</option>
+            <option value="sdk">sdk（Claude Code 运行时）</option>
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">起草模型（默认用编排模型）</span>
+          <select value={modelProfileId} onChange={(e) => setModelProfileId(e.target.value)}>
+            <option value="">默认（编排模型）</option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}（{m.model}）
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <button
+        className="btn-primary"
+        disabled={busy || requirement.trim().length < 2}
+        onClick={() => void draft()}
+      >
+        {busy ? "起草中…" : "生成草稿"}
+      </button>
+    </Drawer>
   );
 }
 
@@ -93,32 +214,48 @@ const AGENT_STATUS_MAP: Record<string, string> = {
 
 function AgentEditor({
   agent,
+  prefill,
   models,
   onClose,
   onSaved,
   onError,
 }: {
   agent: AgentRow | null;
+  prefill: FactoryAgentDraft | null;
   models: ModelProfileRow[];
   onClose: () => void;
   onSaved: () => void;
   onError: (e: unknown) => void;
 }) {
   const isNew = agent === null;
-  const [slug, setSlug] = useState(agent?.slug ?? "");
-  const [name, setName] = useState(agent?.name ?? "");
-  const [description, setDescription] = useState(agent?.description ?? "");
-  const [roleDetail, setRoleDetail] = useState(agent?.role_detail ?? "");
-  const [tags, setTags] = useState((agent?.capability_tags ?? []).join(", "));
-  const [systemPrompt, setSystemPrompt] = useState(agent?.system_prompt ?? "");
-  const [executor, setExecutor] = useState<string>(agent?.executor ?? "lite");
+  const [slug, setSlug] = useState(agent?.slug ?? prefill?.slug ?? "");
+  const [name, setName] = useState(agent?.name ?? prefill?.name ?? "");
+  const [description, setDescription] = useState(agent?.description ?? prefill?.description ?? "");
+  const [roleDetail, setRoleDetail] = useState(agent?.role_detail ?? prefill?.role_detail ?? "");
+  const [tags, setTags] = useState(
+    (agent?.capability_tags ?? prefill?.capability_tags ?? []).join(", "),
+  );
+  const [systemPrompt, setSystemPrompt] = useState(agent?.system_prompt ?? prefill?.system_prompt ?? "");
+  const [executor, setExecutor] = useState<string>(agent?.executor ?? prefill?.executor ?? "lite");
   const [modelProfileId, setModelProfileId] = useState(
     agent?.model_profile_id ?? models[0]?.id ?? "",
   );
   const [maxConcurrency, setMaxConcurrency] = useState(agent?.max_concurrency ?? 2);
   const [status, setStatus] = useState<string>(agent?.status ?? "draft");
-  const [budget, setBudget] = useState(JSON.stringify(agent?.default_budget ?? {}, null, 2));
-  const [changeNote, setChangeNote] = useState("");
+  const [budget, setBudget] = useState(
+    JSON.stringify(
+      agent?.default_budget ?? prefill?.default_budget ?? {},
+      null,
+      2,
+    ),
+  );
+  const [changeNote, setChangeNote] = useState(prefill ? "工厂起草初版" : "");
+  const [inputContract, setInputContract] = useState(
+    agent?.input_contract ?? prefill?.input_contract ?? "",
+  );
+  const [outputContract, setOutputContract] = useState(
+    agent?.output_contract ?? prefill?.output_contract ?? "",
+  );
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"edit" | "versions" | "bindings">("edit");
   const [versions, setVersions] = useState<AgentVersionRow[]>([]);
@@ -163,6 +300,9 @@ function AgentEditor({
           max_concurrency: Number(maxConcurrency),
           status,
           default_budget: budgetObj,
+          input_contract: inputContract,
+          output_contract: outputContract,
+          ...(prefill ? { origin: "factory", avatar: prefill.avatar } : {}),
         });
       } else {
         await agentApi.update(agent.id, {
@@ -178,6 +318,8 @@ function AgentEditor({
           max_concurrency: Number(maxConcurrency),
           status,
           default_budget: budgetObj,
+          input_contract: inputContract,
+          output_contract: outputContract,
         });
       }
       onSaved();
@@ -242,6 +384,26 @@ function AgentEditor({
               onChange={(e) => setSystemPrompt(e.target.value)}
             />
           </label>
+          <div className="form-row">
+            <label className="field">
+              <span className="field-label">输入约定</span>
+              <input
+                type="text"
+                value={inputContract}
+                onChange={(e) => setInputContract(e.target.value)}
+                placeholder="期望的任务单输入"
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">交付约定</span>
+              <input
+                type="text"
+                value={outputContract}
+                onChange={(e) => setOutputContract(e.target.value)}
+                placeholder="期望的交付物形态"
+              />
+            </label>
+          </div>
           <div className="form-row">
             <label className="field">
               <span className="field-label">执行器</span>

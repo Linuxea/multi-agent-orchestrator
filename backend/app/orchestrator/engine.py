@@ -36,15 +36,17 @@ from app.models import (
     Attempt,
     Decision,
     Message,
-    ModelProfile,
     Plan,
+    Playbook,
     Run,
     Task,
 )
 from app.orchestrator.context import (
     COORDINATION_RULES_MD,
     build_run_digest,
+    playbook_stage_keys,
     render_orchestrator_system,
+    session_team,
 )
 from app.orchestrator.helpers import (
     db_session,
@@ -62,7 +64,7 @@ from app.schemas.common import Budget, Usage
 from app.schemas.contracts import TaskBrief
 from app.schemas.plan import PlanTaskSpec, Review
 from app.settings import SettingsService
-from app.utils import text_similarity, utcnow
+from app.utils import text_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -499,12 +501,21 @@ class CoordinationEngine:
     # --- 只读工具 ---
     async def _tool_search_agents(self, ws: WakeState, args: dict[str, Any]) -> dict[str, Any]:
         async with db_session() as session:
-            agents = await self.registry.search_agents(
-                session,
-                query=str(args.get("query") or ""),
-                tags=args.get("tags") or None,
-            )
+            team_slug = str(args.get("team") or "").strip()
+            if team_slug:
+                team = await self.registry.find_team(session, team_slug)
+                if team is None:
+                    raise ControlToolError(f"团队不存在: {team_slug}")
+                agents = await self.registry.list_agents(session, [AgentStatus.active])
+                agents = self.registry.resolve_team_members(team, agents)
+            else:
+                agents = await self.registry.search_agents(
+                    session,
+                    query=str(args.get("query") or ""),
+                    tags=args.get("tags") or None,
+                )
             return {
+                "team": team_slug or None,
                 "agents": [
                     {
                         "slug": a.slug,
@@ -514,7 +525,7 @@ class CoordinationEngine:
                         "executor": a.executor.value,
                     }
                     for a in agents
-                ]
+                ],
             }
 
     async def _tool_get_agent(self, ws: WakeState, args: dict[str, Any]) -> dict[str, Any]:
@@ -536,7 +547,19 @@ class CoordinationEngine:
 
     async def _tool_list_playbooks(self, ws: WakeState, args: dict[str, Any]) -> dict[str, Any]:
         async with db_session() as session:
-            playbooks = await self.registry.list_playbooks(session)
+            team_slug = str(args.get("team") or "").strip()
+            if team_slug:
+                team = await self.registry.find_team(session, team_slug)
+                if team is None:
+                    raise ControlToolError(f"团队不存在: {team_slug}")
+                pb = (
+                    await session.get(Playbook, team.playbook_id)
+                    if team.playbook_id
+                    else None
+                )
+                playbooks = [pb] if pb is not None else []
+            else:
+                playbooks = await self.registry.list_playbooks(session)
             return {
                 "playbooks": [
                     {"id": p.id, "name": p.name, "trigger_hint": p.trigger_hint, "stages": p.stages}
@@ -575,6 +598,24 @@ class CoordinationEngine:
                     raise ControlToolError(f"任务 {s.key} 指派了不可用 agent: {s.agent_slug}")
             _check_acyclic(specs)
 
+            # 编队剧本：阶段引用校验 + 偏离计算（D-4.5）
+            bound = await session_team(session, run.session_id)
+            stage_keys = playbook_stage_keys(bound[1]) if bound else []
+            if stage_keys:
+                for s in specs:
+                    if s.playbook_stage_key and s.playbook_stage_key not in stage_keys:
+                        raise ControlToolError(
+                            f"任务 {s.key} 引用了剧本中不存在的阶段: {s.playbook_stage_key}"
+                            f"（可用阶段: {', '.join(stage_keys)}）"
+                        )
+            elif any(s.playbook_stage_key for s in specs):
+                raise ControlToolError("本会话未绑定团队剧本，不能填写 playbook_stage_key")
+            deviates = (
+                [k for k in stage_keys if k not in {s.playbook_stage_key for s in specs}]
+                if stage_keys
+                else []
+            )
+
             version = run.current_plan_version + 1
             plan = Plan(
                 id=new_id("plan"),
@@ -601,6 +642,7 @@ class CoordinationEngine:
                     status=TaskStatus.pending,
                     priority=s.priority,
                     optional=s.optional,
+                    playbook_stage_key=s.playbook_stage_key,
                 )
                 session.add(task)
                 await session.flush()
@@ -630,6 +672,7 @@ class CoordinationEngine:
                     "task_count": len(specs),
                     "estimated_cost": estimated,
                     "rationale": str(args.get("rationale") or ""),
+                    "deviates_from_playbook": deviates,
                 },
             )
             await record_decision(
@@ -708,6 +751,19 @@ class CoordinationEngine:
                 if agent is None or agent.status != AgentStatus.active:
                     raise ControlToolError(f"指派了不可用 agent: {s.agent_slug}")
 
+            # 编队剧本：新增任务的阶段引用校验（D-4.5）
+            bound = await session_team(session, run.session_id)
+            stage_keys = playbook_stage_keys(bound[1]) if bound else []
+            if stage_keys:
+                for s in add_specs:
+                    if s.playbook_stage_key and s.playbook_stage_key not in stage_keys:
+                        raise ControlToolError(
+                            f"任务 {s.key} 引用了剧本中不存在的阶段: {s.playbook_stage_key}"
+                            f"（可用阶段: {', '.join(stage_keys)}）"
+                        )
+            elif any(s.playbook_stage_key for s in add_specs):
+                raise ControlToolError("本会话未绑定团队剧本，不能填写 playbook_stage_key")
+
             # 应用变更
             for key in remove_keys:
                 t = tasks[key]
@@ -736,6 +792,7 @@ class CoordinationEngine:
                     status=TaskStatus.pending,
                     priority=s.priority,
                     optional=s.optional,
+                    playbook_stage_key=s.playbook_stage_key,
                 )
                 session.add(t)
                 await session.flush()
@@ -771,6 +828,7 @@ class CoordinationEngine:
                         "agent_slug": agent.slug if agent else "",
                         "depends_on": list(t.depends_on),
                         "priority": t.priority,
+                        "playbook_stage_key": t.playbook_stage_key,
                     }
                 )
             plan = Plan(
@@ -1929,38 +1987,9 @@ class CoordinationEngine:
     async def _model_config_for(
         self, session: AsyncSession, orchestrator: bool
     ) -> ModelConfig | None:
-        settings = await self.settings.get(session)
-        profile_id = settings.get("orchestrator_model_profile_id")
-        profile: ModelProfile | None = None
-        if profile_id:
-            result = await session.execute(
-                select(ModelProfile).where(ModelProfile.id == profile_id)
-            )
-            profile = result.scalar_one_or_none()
-        if profile is None:
-            result = await session.execute(
-                select(ModelProfile).where(ModelProfile.is_default_orchestrator.is_(True)).limit(1)
-            )
-            profile = result.scalar_one_or_none()
-        if profile is None:
-            result = await session.execute(select(ModelProfile).limit(1))
-            profile = result.scalar_one_or_none()
-        if profile is None:
-            return None
-        api_key = ""
-        if profile.api_key_secret_id:
-            from app.models import Secret as SecretModel
+        from app.runtime.model_config import resolve_model_config
 
-            secret = await session.get(SecretModel, profile.api_key_secret_id)
-            if secret is not None:
-                from app import secrets as secrets_util
-
-                try:
-                    api_key = secrets_util.decrypt(secret.encrypted_value)
-                    secret.last_used_at = utcnow()  # type: ignore[assignment]
-                except ValueError:
-                    api_key = ""
-        return _model_config_from_profile(profile, api_key)
+        return await resolve_model_config(session, self.settings, orchestrator=orchestrator)
 
     async def _build_digest(self, session: AsyncSession, run: Run) -> str:
         tasks = await self._run_tasks(session, run.id)
@@ -2026,21 +2055,6 @@ class CoordinationEngine:
 
     def open_questions(self, run_id: str) -> list[PendingQuestion]:
         return list(self._questions.get(run_id, {}).values())
-
-
-def _model_config_from_profile(profile: ModelProfile, api_key: str) -> ModelConfig:
-    return ModelConfig(
-        profile_id=profile.id,
-        model=profile.model,
-        base_url=profile.base_url,
-        api_key=api_key,
-        max_output_tokens=profile.max_output_tokens,
-        temperature=profile.temperature,
-        thinking=profile.thinking.value,
-        context_window=profile.context_window,
-        price_input=float(profile.price_input or 0),
-        price_output=float(profile.price_output or 0),
-    )
 
 
 def _check_acyclic(specs: list[PlanTaskSpec]) -> None:

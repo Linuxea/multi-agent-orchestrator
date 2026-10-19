@@ -33,6 +33,10 @@ _TASK_SPEC_PROPS: dict[str, Any] = {
     "priority": {"type": "integer", "minimum": 1, "maximum": 5},
     "acceptance_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1},
     "optional": {"type": "boolean"},
+    "playbook_stage_key": {
+        "type": "string",
+        "description": "对应会话编队剧本中的阶段 key（如 S1）；未绑定剧本时留空",
+    },
 }
 
 
@@ -44,12 +48,15 @@ def control_tool_schemas(agent_slugs: list[str]) -> list[dict[str, Any]]:
     return [
         {
             "name": "search_agents",
-            "description": "按描述和标签检索注册表，返回可用（active）agent 的摘要",
+            "description": (
+                "按描述和标签检索注册表，返回可用（active）agent 的摘要；"
+                "传 team（团队 slug）时改为返回该团队成员"
+            ),
             "input_schema": _with_rationale(
                 {
                     "query": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
-                    "team": {"type": "string"},
+                    "team": {"type": "string", "description": "团队 slug：只看该团队成员"},
                 },
                 [],
             ),
@@ -61,7 +68,7 @@ def control_tool_schemas(agent_slugs: list[str]) -> list[dict[str, Any]]:
         },
         {
             "name": "list_playbooks",
-            "description": "列出团队模板",
+            "description": "列出团队模板；传 team（团队 slug）时只返回该团队绑定的剧本",
             "input_schema": _with_rationale({"team": {"type": "string"}}, []),
         },
         {

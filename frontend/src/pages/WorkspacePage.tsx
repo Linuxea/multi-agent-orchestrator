@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { artifactApi, runApi, sessionApi } from "../api/endpoints";
+import { artifactApi, runApi, sessionApi, teamApi } from "../api/endpoints";
 import type { ArtifactRow, DecisionRow, MessageInfo, RunDetail, RunListItem, SessionInfo } from "../api/types";
 import type { StreamEvent } from "../api/ws";
 import { EventTelemetry } from "../components/EventTelemetry";
@@ -65,6 +65,25 @@ export function WorkspacePage() {
       .catch(apiError);
   }, [apiError]);
   useEffect(loadSessions, [loadSessions]);
+
+  const teamsAsync = useAsync(() => teamApi.list(), []);
+  const teams = teamsAsync.data ?? [];
+  const currentSession = sessions.find((s) => s.id === effectiveId) ?? null;
+  const currentTeamName =
+    teams.find((t) => t.id === currentSession?.default_team_id)?.name ?? "";
+
+  const setSessionTeam = async (teamId: string) => {
+    if (!effectiveId) return;
+    try {
+      const updated = await sessionApi.patch(
+        effectiveId,
+        teamId ? { default_team_id: teamId } : { clear_team: true },
+      );
+      setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    } catch (e) {
+      apiError(e);
+    }
+  };
 
   const msgs = useAsync<MessageInfo[]>(
     () => (effectiveId ? sessionApi.messages(effectiveId) : Promise.resolve([])),
@@ -392,6 +411,26 @@ export function WorkspacePage() {
               {wsStatus === "open" ? "" : "实时通道未连接，事件可能延迟 · "}
               有进行中的运行时，消息将作为补充说明注入
             </span>
+            {effectiveId ? (
+              <label className="composer-team" title="会话绑定的默认编队：协调者优先用其成员与剧本">
+                <span>编队</span>
+                <select
+                  value={currentSession?.default_team_id ?? ""}
+                  onChange={(e) => void setSessionTeam(e.target.value)}
+                >
+                  <option value="">不指定</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                      {t.playbook ? `（${t.playbook.stages.length} 阶段）` : ""}
+                    </option>
+                  ))}
+                </select>
+                {currentTeamName ? (
+                  <span className="chip chip-dusk">{currentTeamName}</span>
+                ) : null}
+              </label>
+            ) : null}
             <button className="btn-primary" disabled={!draft.trim() || sending} onClick={() => void send()}>
               {sending ? "发送中…" : "发送"}
             </button>
