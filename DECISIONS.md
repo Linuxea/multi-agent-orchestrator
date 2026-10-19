@@ -6,6 +6,35 @@
 
 D-<期数>.<序号>，按开发顺序递增。
 
+## 第三期（完整界面）——设计与实现决策
+
+- **D-3.1 前端栈与目录**：`frontend/` = React 19 + TypeScript(strict) + Vite + react-router 7；
+  不引 UI 组件库，token 化手写 CSS（`src/styles/`）。UI 文案中文、代码英文 snake/camel 各随其主。
+  质量门：`npm run build`（tsc -b + vite build）、eslint、vitest + testing-library（jsdom）。
+- **D-3.2 访问密码落地（兑现 D-1.11 / §11.4）**：无状态密钥头（`Authorization: Bearer` 或
+  `X-Platform-Key`），前端存 localStorage；`GET /api/v1/auth/status` 免认证探测是否启用，
+  `POST /api/v1/auth/verify` 校验。设置读取带 5s 缓存（免每请求读库）、secrets.compare_digest
+  常数时间比较；改密后最长 5s 生效。WS 经 `?key=`（浏览器 WS 无法自定义头部），密钥错误以
+  关闭码 4401 断开、前端回登录页且不重连；/healthz、/readyz、/metrics、/docs 不拦截。
+- **D-3.3 前端产物服务**：`frontend/dist` 存在时后端挂载 SPA 直出（`PLATFORM_FRONTEND_DIST`
+  可覆盖路径）；开发态 Vite dev server 代理 /api（含 WS）到 127.0.0.1:8000；Docker 部署用
+  nginx（frontend 服务，8080→80）反代 API 到 backend。
+- **D-3.4 服务启动即种子**：API startup 调 `bootstrap.seed_initial_data()`（内置工具 + 预置
+  agent + 演示模型配置 + 演示降级，全部幂等），界面化部署不再依赖先跑 `platform init`；
+  种子逻辑自 cli.py 抽至 bootstrap，CLI 与 API 共用。
+- **D-3.5 事件驱动刷新策略**：WS 事件按类型白名单触发 350ms 去抖的定向 refetch（运行详情/
+  计划/决策/交付物/消息/运行列表）；attempt.output.delta 仅推送不触发刷新；事件按 run 通道
+  seq 去重（补发与实时重叠时取大）；global 通道仅用于审批角标。
+- **D-3.6 设计语言「夜航调度室」**：深蓝石墨分层底色（#0E141B→#26323F）+ 六语义色
+  （信号青=运行/数据流、琥珀=待办/审批、苔绿=采纳/成功、岚紫=协调者、落日红=失败、
+  灰烬=中性终态）；中文系统字体做 UI、等宽字体承担全部遥测（seq/ID/费用/时间戳/枚举）；
+  签名元素 = 右侧「事件遥测」栏（seq 刻度 + 分类色标 + 载荷展开 + 在播呼吸光标）；
+  状态枚举一律映射中文徽章。避免模板化三件套（奶油衬线/纯黑酸绿/报纸细线）。
+- **D-3.7 新增端点**：`GET /runs/{run_id}/artifacts`（运行维度交付物清单）——原接口只有按 ID
+  取单个，界面交付物页无法枚举；交付物下载经 blob（`<a href>` 无法携带密钥头）。
+- **D-3.8 终局答复去重**：协调者终答同时存在于持久化 Message 与 run.final_answer；活跃运行的
+  终答气泡被过滤，统一由 FinalAnswerCard（含 outcome 徽章 + 缺口清单）呈现。
+
 ## 第二期（SdkExecutor + 工具库）——设计与实现决策
 
 - **D-2.1 claude-agent-sdk 版本线**：PyPI 当前版本线为 0.2.x（无 1.x），实测 0.2.168。适配层按真实 API 编写：自定义进程内工具经 `@sdk.tool` + `create_sdk_mcp_server`（options.tools 已不接受 Tool 列表）；会话用 `ClaudeSDKClient`（connect / receive_response / query / interrupt）。

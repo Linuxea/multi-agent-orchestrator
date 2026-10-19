@@ -1,0 +1,193 @@
+/* ---------- 注册表类页面 ---------- */
+
+.settings-section {
+  margin-bottom: 20px;
+}
+
+.checkbox-field {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  flex-direction: row !important;
+}
+
+.checkbox-field input {
+  width: auto;
+}
+
+/* 版本行 */
+.ver-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.ver-note {
+  flex: 1;
+  color: var(--ink-dim);
+  font-size: var(--fs-sm);
+}
+
+.ver-time {
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+}
+
+/* ---------- 审批页 ---------- */
+
+.approval-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.approval-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.approval-tool {
+  color: var(--c-moss);
+}
+
+.approval-action {
+  color: var(--ink);
+  font-size: var(--fs-sm);
+}
+
+.approval-meta {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+}
+
+.approval-card details summary {
+  cursor: pointer;
+  color: var(--ink-dim);
+  font-size: var(--fs-sm);
+  margin-bottom: 6px;
+}
+
+.approval-card pre {
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 10px;
+  font-size: var(--fs-xs);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.approval-risk {
+  color: var(--c-amber);
+  font-size: var(--fs-sm);
+  margin: 8px 0 0;
+}
+
+.approval-reason {
+  color: var(--ink-faint);
+  font-size: var(--fs-xs);
+  margin: 6px 0 0;
+}
+
+.approval-decide {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.remember-field {
+  flex: 1;
+  min-width: 240px;
+  margin-bottom: 0;
+}
+
+.remember-options {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.remember-opt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-sm);
+  color: var(--ink-dim);
+}
+
+.remember-opt input {
+  width: auto;
+}
+
+.approval-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+/* ---------- 工具页 ---------- */
+
+.tool-pre {
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 10px;
+  max-height: 300px;
+  overflow: auto;
+  font-size: var(--fs-xs);
+}
+
+.disc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ---------- 团队页 ---------- */
+
+.member-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.member-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  color: var(--ink-dim);
+  font-size: var(--fs-sm);
+}
+
+.member-tag.on {
+  border-color: var(--c-signal);
+  color: var(--c-signal);
+  background: var(--t-signal);
+}
+
+.member-tag input {
+  width: auto;
+  margin: 0;
+}

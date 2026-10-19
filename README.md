@@ -7,7 +7,7 @@
 
 ```
 backend/   Python 3.12 + FastAPI + SQLAlchemy(async) + anthropic SDK
-frontend/  第三期开始（React + TS + Vite）
+frontend/  React 19 + TypeScript + Vite（第三期界面）
 data/      运行时数据（工作目录、交付物、SQLite）——git 忽略
 docs/      规格与模块文档
 ```
@@ -63,7 +63,49 @@ platform run "需求" [--auto-approve] 运行一次需求，终端打印事件�
 - **密钥运行时**（§8.8、§11）：工具配置内 `{"$secret": "名称"}` 引用物化时解密、
   仅经内存下发；事件流与审批参数一律脱敏；任何接口不回明文。
 
-### 真实 Claude Code 运行时冒烟（可选）
+### 第三期新增：完整界面
+
+**界面化运行（推荐演示路径）**：
+
+```bash
+# 终端 1：模拟模型服务（同上）
+cd backend
+uv run python -m tests.mockmodel.server_main --port 8765 --script tests/scripts/multi_domain_research.yaml
+
+# 终端 2：后端（首次启动自动建库 + 种子；MOCK_MODEL_URL 指向模拟模型）
+cd backend
+MOCK_MODEL_URL=http://127.0.0.1:8765 uv run uvicorn app.main:app --port 8000
+
+# 终端 3：前端开发服务（http://localhost:5173，/api 自动代理到 8000）
+cd frontend
+npm install && npm run dev
+```
+
+打开 http://localhost:5173 ：左侧会话轨输入需求 → 协调者提出计划（计划卡上确认）→
+任务板观察派发/复核 → 右侧「事件遥测」栏实时滚动全部事件（可按类别过滤、展开载荷、
+切回历史运行自动补发）→ 终局答复卡含 outcome 与缺口清单。
+
+- **运行工作台**：暂停/继续/中止/追加预算；任务抽屉内取消/跳过/强制采纳/重派/改派/
+  追加尝试次数/向运行中 agent 注入指令；计划版本、决策日志、交付物（可下载/上传）分页签。
+- **审批中心**：ask 权限调用待办清单，批准/拒绝 + 记忆范围（仅本次/本运行内/始终允许该 agent）。
+- **注册表**：Agent（版本快照、回滚、工具绑定与权限覆盖）、团队、工具库
+  （注册 → 连接测试 → MCP 子工具发现）、模型配置（四项体检 + 时延）、密钥库。
+- **设置**：计划审批模式/阈值、并行上限、审批超时、高危命令表、访问密码（保存后所有
+  API 与 WS 需要密码，登录页生效）、custom_python 开关等，保存即生效。
+
+**生产构建**：`npm run build` 后由后端直接服务 `frontend/dist`（单容器），
+或 `docker compose up`（frontend: nginx 8080 → backend 8000 → PostgreSQL 16）。
+
+### 前端质量门
+
+```bash
+cd frontend
+npm run build     # tsc -b（strict）+ vite build
+npm test          # vitest：WS 协议/REST 客户端/时间线组装/审批交互
+npx eslint src
+```
+
+## 真实 Claude Code 运行时冒烟（可选）
 
 ```bash
 npm install -g @anthropic-ai/claude-code   # 或已有 claude CLI
@@ -76,6 +118,7 @@ export PLATFORM_CLAUDE_CLI_PATH=$(which claude)
 ```bash
 cd backend
 uv run pytest                     # 全部自动化测试（模拟模型 + 模拟 MCP，无需密钥）
+uv run python -m tests.e2e.test_phase3_ui_smoke   # 界面链路冒烟（真实进程 + dist + WS）
 uv run ruff check app tests       # 代码风格
 uv run mypy app                   # strict 类型检查
 DEEPSEEK_API_KEY=sk-... uv run pytest -m real_model   # 真实模型冒烟（可选）
@@ -92,9 +135,17 @@ uv run alembic upgrade head       # 数据库迁移
 模型体检（四项 + 时延）、mockmcp 对照真实 MCP 客户端 SDK 验证、
 工作目录物化。
 
+第三期验收清单（§14.4）：完整界面覆盖 §12 全部 API 面——运行工作台（会话/计划卡/
+提问卡/任务板/决策/交付物/事件遥测/预算与控制）、审批中心（remember 三档）、
+Agent 注册表（版本/回滚/工具绑定）、工具库（注册/测试/发现）、模型配置（体检）、
+密钥库、设置（含访问密码启用强制 §11.4）、WS 订阅/补发/心跳/重连（§12.3）、
+登录门与密钥失效回退；`tests/e2e/test_phase3_ui_smoke.py` 以真实进程走通
+静态服务→种子→会话→计划批准→终态→事件补发→WS→密码强制全链路（16 项）。
+
 ## 部署
 
-- Docker：`docker-compose.yml`（backend + PostgreSQL 16；前端第三期接入）
+- Docker：`docker-compose.yml`（frontend: nginx + backend + PostgreSQL 16）
+- 单容器：`frontend/` 内 `npm run build` 后，后端自动服务 `frontend/dist`
 - 本地无 Docker：默认 SQLite（`data/platform.db`），见上
 
 ## 分期状态
@@ -102,6 +153,6 @@ uv run alembic upgrade head       # 数据库迁移
 - [x] 第 0 期 测试基础设施（模拟模型服务 / 模拟 MCP / 冒烟测试框架）
 - [x] 第一期 协调引擎骨架
 - [x] 第二期 执行引擎与工具库（SdkExecutor、MCP、Skills、审批链路）
-- [ ] 第三期 完整界面
+- [x] 第三期 完整界面（运行工作台 / 审批中心 / 注册表 / 设置 / 访问密码）
 - [ ] 第四期 Agent 工厂与团队
 - [ ] 第五期 增强功能

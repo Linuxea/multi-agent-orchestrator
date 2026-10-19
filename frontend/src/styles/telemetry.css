@@ -1,0 +1,179 @@
+/* ---------- 事件遥测栏（签名元素） ---------- */
+
+.telemetry {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.telemetry-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 10px var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.telemetry-live {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+  flex: 1;
+}
+
+.telemetry-live.on {
+  color: var(--c-signal);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.telemetry-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.ev-filter {
+  font-size: var(--fs-xs);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.ev-filter::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: var(--tick, var(--ink-faint));
+  vertical-align: 1px;
+}
+
+.ev-filter.on {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--bg-2);
+}
+
+.telemetry-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-2) 0;
+}
+
+.ev-row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  border-bottom: 1px solid rgba(43, 56, 70, 0.4);
+}
+
+.ev-row:last-child {
+  border-bottom: none;
+}
+
+.ev-seq {
+  text-align: right;
+  padding: 6px 8px 6px 0;
+  color: var(--ink-faint);
+  font-size: var(--fs-xs);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.ev-seq:hover {
+  color: var(--c-signal);
+}
+
+/* 仅推送事件（输出增量）标为斜体淡色 */
+.ev-seq.ev-delta {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.ev-main {
+  padding: 5px var(--sp-3) 6px 0;
+  min-width: 0;
+}
+
+.ev-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+
+.ev-tick {
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  align-self: center;
+  flex: none;
+}
+
+.ev-type {
+  font-size: var(--fs-sm);
+  color: var(--ink);
+}
+
+.ev-task {
+  font-size: var(--fs-xs);
+  color: var(--c-signal);
+}
+
+.ev-actor {
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+}
+
+.ev-ts {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+}
+
+.ev-brief {
+  font-size: var(--fs-xs);
+  color: var(--ink-dim);
+  padding-left: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ev-json {
+  margin: 6px 0 4px 11px;
+  padding: 8px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  color: var(--ink-dim);
+  font-size: var(--fs-xs);
+  overflow-x: auto;
+  max-height: 320px;
+}
+
+/* 在播光标 */
+.telemetry-cursor {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.telemetry-cursor span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c-signal);
+  animation: pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 12px var(--c-signal);
+}

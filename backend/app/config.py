@@ -30,6 +30,9 @@ class AppConfig(BaseSettings):
     # 数据目录
     data_dir: Path = _REPO_ROOT / "data"
 
+    # 前端构建产物目录（存在则由后端直接服务；第三期 D-3.5）
+    frontend_dist: Path = _REPO_ROOT / "frontend" / "dist"
+
     # 唤醒合并窗口（秒）；测试中调小（见 conftest）
     wake_merge_seconds: float = 2.0
 

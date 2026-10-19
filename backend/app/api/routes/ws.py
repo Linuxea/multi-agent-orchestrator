@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.api.auth import ws_authorized
 from app.bootstrap import get_container
 from app.events.bus import BusMessage
 from app.events.service import load_events
@@ -60,6 +61,11 @@ def _bus_message(channel: str, msg: BusMessage) -> dict[str, Any]:
 
 @router.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
+    if not await ws_authorized(ws):
+        # 认证失败：4401 = 自定义"未授权"关闭码，前端据此回到登录页
+        await ws.accept()
+        await ws.close(code=4401)
+        return
     await ws.accept()
     container = get_container()
     channels: list[str] = []

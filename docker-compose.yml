@@ -1,9 +1,19 @@
 version: "3.9"
 
-# 部署骨架（§3.2）：backend + PostgreSQL。前端自第三期接入。
+# 部署骨架（§3.2）：frontend(nginx) + backend + PostgreSQL。
 # 本地无 Docker 启动方式见 README。
 
 services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_started
+
   backend:
     build:
       context: ./backend

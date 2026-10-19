@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.bootstrap import get_container
 from app.orchestrator.helpers import db_session
@@ -31,6 +32,34 @@ async def get_artifact(artifact_id: str) -> dict[str, object]:
             "status": art.status.value,
             "derived_from": art.derived_from,
         }
+
+
+@router.get("/runs/{run_id}/artifacts")
+async def list_run_artifacts(run_id: str) -> list[dict[str, object]]:
+    """运行维度交付物清单（第三期界面）。"""
+    from app.models import Artifact
+
+    async with db_session() as session:
+        result = await session.execute(
+            select(Artifact).where(Artifact.run_id == run_id).order_by(Artifact.created_at)
+        )
+        return [
+            {
+                "id": a.id,
+                "run_id": a.run_id,
+                "task_id": a.task_id,
+                "attempt_id": a.attempt_id,
+                "name": a.name,
+                "kind": a.kind.value,
+                "mime": a.mime,
+                "size": a.size,
+                "sha256": a.sha256,
+                "summary": a.summary,
+                "status": a.status.value,
+                "derived_from": a.derived_from,
+            }
+            for a in result.scalars().all()
+        ]
 
 
 @router.get("/artifacts/{artifact_id}/content")

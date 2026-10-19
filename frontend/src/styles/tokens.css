@@ -1,0 +1,71 @@
+/* ============================================================
+   设计 token —— 「夜航调度室」
+   深蓝石墨底 + 六个语义色；等宽字体承载全部遥测数据。
+   ============================================================ */
+
+:root {
+  /* 底色层：应用 → 面板 → 浮起 → 悬停 */
+  --bg-0: #0e141b;
+  --bg-1: #151d26;
+  --bg-2: #1d2733;
+  --bg-3: #26323f;
+  --line: #2b3846;
+  --line-strong: #3a4a5c;
+
+  /* 墨色 */
+  --ink: #dee7ef;
+  --ink-dim: #8da0b2;
+  --ink-faint: #5b6b7a;
+
+  /* 语义色 */
+  --c-signal: #56c2f2; /* 信号青：数据流、运行中、链接 */
+  --c-amber: #f2b155; /* 琥珀：待审批、暂停、阻塞 */
+  --c-moss: #5fce9c; /* 苔绿：采纳、成功 */
+  --c-dusk: #a996ec; /* 岚紫：主 agent（协调者） */
+  --c-ember: #ee7580; /* 落日红：失败、危险 */
+  --c-ash: #7d8fa0; /* 灰烬：中性、终态取消/跳过 */
+
+  /* 语义色淡底（chip / 浅条） */
+  --t-signal: rgba(86, 194, 242, 0.13);
+  --t-amber: rgba(242, 177, 85, 0.13);
+  --t-moss: rgba(95, 206, 156, 0.13);
+  --t-dusk: rgba(169, 150, 236, 0.13);
+  --t-ember: rgba(238, 117, 128, 0.13);
+  --t-ash: rgba(125, 143, 160, 0.14);
+
+  /* 字体：中文界面用系统栈；遥测一律等宽 */
+  --font-ui:
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei",
+    system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
+    Consolas, monospace;
+
+  /* 字号阶梯 */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 24px;
+
+  /* 节奏 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  --radius-s: 5px;
+  --radius: 8px;
+  --radius-l: 12px;
+
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.25);
+
+  /* 布局常量 */
+  --topbar-h: 52px;
+  --rail-w: 264px;
+  --telemetry-w: 380px;
+}

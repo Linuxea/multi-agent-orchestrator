@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
+from app.api import auth
+from app.api.auth import enforce_api_auth
 from app.api.routes import (
     agents,
     answers,
@@ -24,6 +27,7 @@ from app.api.routes import (
     ws,
 )
 from app.bootstrap import get_container
+from app.config import get_config
 from app.db import init_db
 
 
@@ -34,6 +38,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         openapi_url="/openapi.json",
     )
+    app.middleware("http")(enforce_api_auth)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -43,6 +48,7 @@ def create_app() -> FastAPI:
     )
 
     routers = [
+        auth.router,
         sessions.router,
         runs.router,
         plans.router,
@@ -67,6 +73,10 @@ def create_app() -> FastAPI:
     async def _startup() -> None:
         await init_db()
         get_container()
+        # 界面部署可不跑 CLI：首次启动幂等种子（内置工具/预置 agent/演示模型）
+        from app.bootstrap import configured_mock_url, seed_initial_data
+
+        await seed_initial_data(configured_mock_url())
 
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:
@@ -91,5 +101,10 @@ def create_app() -> FastAPI:
             f"platform_event_bus_subscribers {len(container.bus._listeners)}",  # noqa: SLF001
         ]
         return "\n".join(lines) + "\n"
+
+    # 前端构建产物存在时由后端直接服务（单容器部署）；开发态走 Vite 代理
+    dist = get_config().frontend_dist
+    if dist.is_dir():
+        app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
 
     return app

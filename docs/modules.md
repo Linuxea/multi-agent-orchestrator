@@ -2,6 +2,24 @@
 
 模块 README 索引；规格出处标注为 §x.y。
 
+## frontend/src —— 完整界面（§12，第三期）
+
+- `api/` REST 客户端（密钥头/错误形态/blob 下载）、端点封装、WS 客户端
+  （订阅/补发/心跳 pong/seq 去重/指数退避重连/4401 处理，§12.3）。
+- `state/` AppProvider（认证探测/登录/登出/WS 状态/toast）、useAsync 数据 hook。
+- `components/` 事件遥测栏（签名元素：seq 刻度+分类色标+载荷展开+在播光标）、
+  运行时间线（消息/计划卡/提问卡/终局卡组装）、任务板+任务抽屉（§10.9 干预）、
+  状态徽章（中文映射）、用量条、抽屉。
+- `pages/` 运行工作台（会话轨+舞台+遥测三栏）、审批中心（remember 三档）、
+  Agent 注册表（版本/回滚/绑定）、工具库、模型配置（体检）、密钥、团队、设置、登录。
+- `styles/` 设计 token「夜航调度室」+ 布局样式。
+
+## app/api/auth —— 访问密码（§11.4，第三期）
+
+- 设置 access_password 后 /api/v1/* 需密钥头（Bearer / X-Platform-Key）；
+  auth/status 免认证探测、auth/verify 校验；WS 走 ?key=，错误以 4401 关闭。
+  设置读取 5s 缓存 + 常数时间比较（D-3.2）。
+
 ## app/orchestrator —— 协调引擎（§5）
 
 - `engine.py` CoordinationEngine：主 agent 事件驱动唤醒循环（§5.11）、14 个控制工具
@@ -60,7 +78,8 @@ agent/团队/模板 CRUD、版本快照（§4.2）、检索；`presets.py` 11 �
 
 ## app/api —— REST + WebSocket（§12）
 
-路由按资源分组；`ws.py` 实现 §12.3 协议（订阅、补发、心跳、仅推送事件）。
+路由按资源分组；`ws.py` 实现 §12.3 协议（订阅、补发、心跳、仅推送事件）；
+`auth.py` 访问密码中间件（§11.4）；`app.py` 启动种子（D-3.4）+ 前端 dist 直出（D-3.3）。
 
 ## tests —— 测试基础设施与用例（§14.1、§14.2、§14.3）
 
@@ -69,5 +88,6 @@ agent/团队/模板 CRUD、版本快照（§4.2）、检索；`presets.py` 11 �
   已对照真实 MCP 客户端 SDK 验证（发现并修复 HTTP 端点注解缺陷，D-2.3）。
 - `fakesdk.py` 伪 claude-agent-sdk（SdkExecutor 单元测试）。
 - `scripts/multi_domain_research.yaml` 端到端剧本。
-- `unit/` 状态机、执行器（lite/sdk）、工作目录、权限链、密钥、MCP 客户端验证；
-  `e2e/` 验收清单（第一期 §14.2 / 第二期 §14.3）、协调规则逐行测试、工具流与审批。
+- `unit/` 状态机、执行器（lite/sdk）、工作目录、权限链、密钥、MCP 客户端验证、访问密码；
+  `e2e/` 验收清单（第一期 §14.2 / 第二期 §14.3）、协调规则逐行测试、工具流与审批、
+  界面链路冒烟（第三期，真实进程：dist 直出→种子→会话→计划批准→终态→WS→密码强制）。

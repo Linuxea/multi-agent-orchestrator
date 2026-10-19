@@ -23,54 +23,29 @@ def _setup_logging(verbose: bool) -> None:
 
 
 def _mock_url() -> str:
-    """模拟模型地址：PLATFORM_MOCK_MODEL_URL 或 MOCK_MODEL_URL（兼容简写）。"""
-    import os
+    """模拟模型地址（bootstrap.configured_mock_url + 配置兜底）。"""
+    from app.bootstrap import configured_mock_url
 
-    return os.environ.get("MOCK_MODEL_URL", "") or get_config().mock_model_url
+    return configured_mock_url() or get_config().mock_model_url
 
 
 async def _demo_downgrade_executors() -> int:
-    """演示模式（模拟模型）：仅在 Claude Code 运行时不可用时把 sdk 执行器临时改为 lite。
+    """演示模式降级（详见 bootstrap.demo_downgrade_executors / D-2.5）。"""
+    from app.bootstrap import demo_downgrade_executors
 
-    SdkExecutor 已在第二期实现（§14.3）；无运行时环境（无 claude CLI）的演示
-    库自动降级以保证可演示性，见 DECISIONS.md D-2.5。仅影响本地演示库。
-    """
-    from sqlalchemy import select
-
-    from app.enums import ExecutorKind
-    from app.models import Agent
-    from app.runtime.sdk import sdk_runtime_available
-
-    if sdk_runtime_available():
-        return 0
-
-    async with db_session() as session:
-        result = await session.execute(
-            select(Agent).where(Agent.executor == ExecutorKind.sdk)
-        )
-        agents = list(result.scalars().all())
-        for a in agents:
-            a.executor = ExecutorKind.lite
-        return len(agents)
+    return await demo_downgrade_executors()
 
 
 async def _cmd_init() -> None:
     await init_db()
     mock_url = _mock_url()
-    if mock_url:
-        await _ensure_mock_profile(mock_url)
-    from app.registry.presets import seed_presets
-    from app.tools.service import seed_builtin_tools
+    from app.bootstrap import seed_initial_data
 
-    async with db_session() as session:
-        builtins = await seed_builtin_tools(session)
-        print(f"内置工具：{len(builtins)} 个新建")
-        created = await seed_presets(session)
-        print(f"预置 agent：{len(created)} 个新建")
-    if mock_url:
-        n = await _demo_downgrade_executors()
-        if n:
-            print(f"演示模式：{n} 个 sdk 执行器已临时降级为 lite（未检测到 Claude Code 运行时）")
+    tools, agents, downgraded = await seed_initial_data(mock_url)
+    print(f"内置工具：{tools} 个新建")
+    print(f"预置 agent：{agents} 个新建")
+    if downgraded:
+        print(f"演示模式：{downgraded} 个 sdk 执行器已临时降级为 lite（未检测到 Claude Code 运行时）")
     print("数据库初始化完成。")
 
 
@@ -100,7 +75,9 @@ async def _approve_once(container: Any, run_id: str) -> bool:
 async def _cmd_run(request: str, auto_approve: bool = False) -> int:
     mock_url = _mock_url()
     if mock_url:
-        await _ensure_mock_profile(mock_url)
+        from app.bootstrap import ensure_mock_profile
+
+        await ensure_mock_profile(mock_url)
         await _demo_downgrade_executors()
 
     container = reset_container()
@@ -194,29 +171,6 @@ def _format_event(msg: Any) -> str:
     return json.dumps(p, ensure_ascii=False)[:100]
 
 
-async def _ensure_mock_profile(mock_url: str) -> None:
-    """配置了 MOCK_MODEL_URL 时确保存在指向模拟服务的默认模型配置。"""
-    from sqlalchemy import select
-
-    from app.models import ModelProfile
-
-    async with db_session() as session:
-        result = await session.execute(select(ModelProfile).limit(1))
-        if result.scalar_one_or_none() is not None:
-            return
-        from app.ids import new_id
-
-        profile = ModelProfile(
-            id=new_id("mp"),
-            name="模拟模型",
-            base_url=mock_url,
-            model="mock-model",
-            max_output_tokens=4096,
-            is_default_orchestrator=True,
-            is_default_worker=True,
-        )
-        session.add(profile)
-        await session.flush()
 
 
 def main() -> None:

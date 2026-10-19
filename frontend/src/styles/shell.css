@@ -1,0 +1,162 @@
+/* ---------- 顶栏 ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-5);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.brand-name {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-size: var(--fs-lg);
+}
+
+/* 品牌印记：三层嵌套的调度环 */
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--c-signal);
+  position: relative;
+  display: inline-block;
+}
+
+.brand-mark::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  border: 2px solid var(--c-dusk);
+}
+
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: var(--c-amber);
+}
+
+.brand-mark.big {
+  width: 34px;
+  height: 34px;
+}
+
+.brand-mark.big::before {
+  inset: 6px;
+}
+
+.brand-mark.big::after {
+  inset: 13px;
+}
+
+.topnav {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.topnav-item {
+  padding: 6px 12px;
+  color: var(--ink-dim);
+  font-size: var(--fs-md);
+  border-radius: var(--radius-s);
+  white-space: nowrap;
+  position: relative;
+}
+
+.topnav-item:hover {
+  color: var(--ink);
+  text-decoration: none;
+  background: var(--bg-2);
+}
+
+.topnav-item.on {
+  color: var(--c-signal);
+  background: var(--t-signal);
+}
+
+.topnav-badge {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--c-amber);
+  color: #33230a;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.ws-state {
+  font-size: var(--fs-xs);
+}
+
+/* ---------- 启动占位 ---------- */
+
+.app-boot {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--ink-dim);
+}
+
+/* ---------- 登录页 ---------- */
+
+.login-wrap {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(ellipse 60% 40% at 70% 10%, rgba(86, 194, 242, 0.07), transparent),
+    radial-gradient(ellipse 50% 40% at 20% 90%, rgba(169, 150, 236, 0.06), transparent),
+    var(--bg-0);
+}
+
+.login-card {
+  width: min(400px, 92vw);
+  padding: var(--sp-6);
+}
+
+.brand-login {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+
+.brand-login h1 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  letter-spacing: 0.04em;
+}
+
+.login-sub {
+  color: var(--ink-dim);
+  font-size: var(--fs-sm);
+  margin: 0 0 var(--sp-5);
+}
+
+.login-err {
+  color: var(--c-ember);
+  font-size: var(--fs-sm);
+  margin: 0 0 var(--sp-3);
+}
