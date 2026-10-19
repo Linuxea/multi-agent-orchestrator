@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { approvalApi } from "../api/endpoints";
 import { useApp } from "../state/app";
 
@@ -24,7 +24,6 @@ const WS_LABEL: Record<string, [string, string]> = {
 export function Topbar() {
   const { wsStatus, logout, onEvent, subscribe } = useApp();
   const [pending, setPending] = useState<number | null>(null);
-  const location = useLocation();
 
   const refresh = () => {
     approvalApi
@@ -67,7 +66,6 @@ export function Topbar() {
             {n.to === "/approvals" && pending ? (
               <span className="topnav-badge">{pending}</span>
             ) : null}
-            {n.to === location.pathname && pending && n.to !== "/approvals" ? null : null}
           </NavLink>
         ))}
       </nav>
