@@ -12,6 +12,7 @@ from app.orchestrator.scheduler import Scheduler
 from app.registry.service import RegistryService
 from app.runtime.executor import ExecutorRegistry
 from app.runtime.lite import LiteExecutor
+from app.runtime.sdk import SdkExecutor
 from app.settings import SettingsService
 
 
@@ -26,6 +27,7 @@ class Container:
         self.artifacts = ArtifactRepository(self.events)
         self.executors = ExecutorRegistry()
         self.executors.register(LiteExecutor())
+        self.executors.register(SdkExecutor())
         self.scheduler = Scheduler(
             self.events, self.registry, self.executors, self.settings, self.artifacts
         )

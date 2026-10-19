@@ -33,7 +33,7 @@ async def deepseek_model(env: None) -> object:
 
 
 async def test_basic_chat(deepseek_model: object) -> None:
-    from app.runtime.model_client import ModelCaller, ModelError
+    from app.runtime.model_client import ModelCaller
 
     caller = ModelCaller(deepseek_model)  # type: ignore[arg-type]
     resp = await caller.create(

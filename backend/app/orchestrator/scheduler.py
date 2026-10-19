@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
+from app.approvals import ApprovalGate
 from app.config import get_config
 from app.enums import AgentStatus, AttemptStatus, BlockerType, RunStatus, TaskStatus
 from app.events.service import EventService
@@ -33,12 +34,16 @@ from app.runtime.types import (
     EvToolFinished,
     EvToolStarted,
     EvUsage,
+    GateResult,
     RunContext,
 )
 from app.runtime.workspace import assemble_system_prompt, build_workspace, first_user_input
 from app.schemas.common import Budget, Usage
 from app.schemas.contracts import TaskBrief
 from app.settings import SettingsService
+from app.tools.permission import check_tool_call
+from app.tools.secrets_runtime import SecretMasker
+from app.tools.service import ToolService
 from app.utils import utcnow
 
 if TYPE_CHECKING:
@@ -66,6 +71,8 @@ class Scheduler:
         self.settings = settings
         self.artifacts = artifacts_repo
         self.engine: CoordinationEngine | None = None
+        self.approvals = ApprovalGate(events, settings)
+        self.tools = ToolService()
 
         self._running: dict[str, tuple[asyncio.Task[None], str]] = {}  # attempt_id → (task, run_id)
         self._pause_events: dict[str, asyncio.Event] = {}  # run_id → gate（set=允许执行）
@@ -254,6 +261,13 @@ class Scheduler:
                 await self.handle_crashed_attempt(attempt_id, "agent 的模型配置不可用")
                 return None
 
+            # --- 第二期：工具库物化（§8、§9.2）---
+            agent_tools = await self.tools.build_agent_tools(session, agent)
+            if agent.executor.value == "sdk":
+                self.tools.materialize_claude_assets(Path(workspace), agent_tools)
+            settings_snapshot = await self.settings.get(session)
+            masker = SecretMasker(agent_tools.secret_values)
+
             system_prompt = assemble_system_prompt(
                 agent.system_prompt, brief, "\n".join(inputs_summary_parts)
             )
@@ -264,6 +278,9 @@ class Scheduler:
             await transition_task(
                 session, self.events, task, TaskStatus.running, reason="开始执行", actor="system"
             )
+            tool_names = ["submit_report"] + [d.name for d in agent_tools.defs]
+            if agent.executor.value == "sdk" and agent_tools.mcp_specs:
+                tool_names += [f"mcp__{slug}__*" for slug in agent_tools.mcp_specs]
             await self.events.emit(
                 session,
                 type="attempt.started",
@@ -276,7 +293,7 @@ class Scheduler:
                     "number": attempt.number,
                     "agent_slug": agent.slug,
                     "workspace_path": str(workspace),
-                    "tools": ["submit_report"],
+                    "tools": tool_names,
                     "model": model_cfg.model,
                     "budget": budget.model_dump(mode="json"),
                 },
@@ -284,7 +301,7 @@ class Scheduler:
 
             gate = self._pause_events.setdefault(run.id, asyncio.Event())
             gate.set()
-            return RunContext(
+            ctx = RunContext(
                 run_id=run.id,
                 task_key=task.key,
                 attempt_id=attempt.id,
@@ -297,7 +314,90 @@ class Scheduler:
                 model=model_cfg,
                 executor=agent.executor.value,
                 pause_event=gate,
+                agent_id=agent.id,
+                tool_defs=agent_tools.defs,
+                mcp_specs=agent_tools.mcp_specs,
+                masker=masker,
+                tool_gate=self._tool_gate,
+                allow_custom_python=bool(settings_snapshot.get("allow_custom_python_tools")),
             )
+            return ctx
+
+    # ------------------------------------------------------------------
+    # 工具门（§8.9 权限链 + §11 审批）
+    # ------------------------------------------------------------------
+    async def _tool_gate(
+        self, ctx: RunContext, tool_name: str, arguments: dict[str, Any]
+    ) -> GateResult:
+        from app.tools.permission import parse_tool_name
+
+        slug, _sub = parse_tool_name(tool_name)
+        # 第一段：权限链（短会话，避免与审批门嵌套）
+        async with db_session() as session:
+            settings = await self.settings.get(session)
+            decision = await check_tool_call(
+                session,
+                settings,
+                agent_id=ctx.agent_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                remembered=self.approvals.remembers(ctx.run_id, ctx.agent_id, slug),
+            )
+            if decision.verdict.value != "ask":
+                if decision.allowed:
+                    return GateResult(approved=True, basis=decision.basis)
+                # deny：记录 tool.call.blocked（§12.4）
+                await self.events.emit(
+                    session,
+                    type="tool.call.blocked",
+                    actor=f"agent:{ctx.agent_slug}",
+                    run_id=ctx.run_id,
+                    task_key=ctx.task_key,
+                    attempt_id=ctx.attempt_id,
+                    payload={
+                        "task_key": ctx.task_key,
+                        "attempt_id": ctx.attempt_id,
+                        "tool": tool_name,
+                        "reason": decision.basis,
+                    },
+                )
+                return GateResult(approved=False, basis=decision.basis)
+
+        # 第二段：ask → 审批门（门内部自管会话与等待）
+        masker = ctx.masker if isinstance(ctx.masker, SecretMasker) else None
+        masked_args = masker.mask_data(arguments) if masker else arguments
+        action = tool_name
+        for key in ("command", "url", "path", "query", "text"):
+            if isinstance(arguments.get(key), str):
+                action = f"{tool_name}: {arguments[key][:120]}"
+                break
+        approved, note = await self.approvals.request(
+            ctx,
+            tool_slug=decision.tool_slug,
+            tool_name=tool_name,
+            action=action,
+            arguments_masked=dict(masked_args) if isinstance(masked_args, dict) else {},
+            reason=decision.basis,
+            risk_note="该工具配置为需审批（ask）",
+        )
+        if approved:
+            return GateResult(approved=True, basis=f"审批通过：{note}")
+        async with db_session() as session:
+            await self.events.emit(
+                session,
+                type="tool.call.blocked",
+                actor=f"agent:{ctx.agent_slug}",
+                run_id=ctx.run_id,
+                task_key=ctx.task_key,
+                attempt_id=ctx.attempt_id,
+                payload={
+                    "task_key": ctx.task_key,
+                    "attempt_id": ctx.attempt_id,
+                    "tool": tool_name,
+                    "reason": f"审批拒绝：{note or '用户拒绝'}",
+                },
+            )
+        return GateResult(approved=False, basis=f"审批拒绝：{note or '用户拒绝'}")
 
     # ------------------------------------------------------------------
     # 事件翻译（§9.7）
@@ -338,17 +438,25 @@ class Scheduler:
                 await self.engine.accumulate_usage(ctx.run_id, usage)
         elif isinstance(event, EvToolStarted):
             async with db_session() as session:
+                masker = ctx.masker if isinstance(ctx.masker, SecretMasker) else None
+                shown_args = masker.mask_data(event.arguments) if masker else event.arguments
                 await self.events.emit(
                     session, type="tool.call.started", actor=actor, run_id=ctx.run_id,
                     task_key=ctx.task_key, attempt_id=ctx.attempt_id,
                     payload={
                         "task_key": ctx.task_key, "attempt_id": ctx.attempt_id,
-                        "tool": event.tool, "arguments": event.arguments,
+                        "tool": event.tool, "arguments": shown_args,
                         "permission": "allow", "permission_basis": "平台内置工具",
                     },
                 )
         elif isinstance(event, EvToolFinished):
             async with db_session() as session:
+                masker = ctx.masker if isinstance(ctx.masker, SecretMasker) else None
+                summary = (
+                    masker.mask_text(event.result_summary)
+                    if masker
+                    else event.result_summary
+                )
                 await self.events.emit(
                     session, type="tool.call.finished", actor=actor, run_id=ctx.run_id,
                     task_key=ctx.task_key, attempt_id=ctx.attempt_id,
@@ -356,7 +464,7 @@ class Scheduler:
                         "task_key": ctx.task_key, "attempt_id": ctx.attempt_id,
                         "tool": event.tool, "ok": event.ok,
                         "duration_ms": event.duration_ms,
-                        "result_summary": event.result_summary,
+                        "result_summary": summary,
                     },
                 )
         elif isinstance(event, EvReported):

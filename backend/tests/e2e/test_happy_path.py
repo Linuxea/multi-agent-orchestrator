@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path as _P
+
 import pytest
 from sqlalchemy import select
 
@@ -14,7 +16,6 @@ from tests.conftest import Harness
 
 pytestmark = pytest.mark.asyncio
 
-from pathlib import Path as _P
 SCRIPT = str((_P(__file__).parent.parent / "scripts" / "multi_domain_research.yaml").resolve())
 
 

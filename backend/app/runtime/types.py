@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from app.schemas.common import Budget, Usage
+
+
+class MaskerLike(Protocol):
+    """脱敏器协议（app.tools.secrets_runtime.SecretMasker 实现）。"""
+
+    def mask_text(self, text: str) -> str: ...
+
+    def mask_data(self, data: Any) -> Any: ...
+
+
+# 工具门：调度器实现（权限链 + 审批）；执行器只依赖此签名
+GateCallable = Callable[[Any, str, dict[str, Any]], Awaitable["GateResult"]]
 
 
 @dataclass
@@ -113,6 +126,27 @@ ExecEvent = (
 
 
 @dataclass
+class GateResult:
+    """执行器工具门判定结果。"""
+
+    approved: bool
+    basis: str = ""
+
+
+@dataclass
+class ToolDef:
+    """执行器可直接调用的工具定义（面向模型；与 app/tools/service 同构）。"""
+
+    name: str
+    slug: str
+    kind: str
+    description: str
+    input_schema: dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
+    subtool: str = ""
+
+
+@dataclass
 class RunContext:
     """执行一次尝试所需的全部已物化上下文。"""
 
@@ -129,3 +163,10 @@ class RunContext:
     executor: str = "lite"
     entry_command: str | None = None
     pause_event: object | None = None  # asyncio.Event；set=允许继续（暂停门）
+    # --- 第二期：工具库（§8、§9）---
+    agent_id: str = ""
+    tool_defs: list[ToolDef] = field(default_factory=list)
+    mcp_specs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    masker: MaskerLike | None = None
+    tool_gate: GateCallable | None = None
+    allow_custom_python: bool = False

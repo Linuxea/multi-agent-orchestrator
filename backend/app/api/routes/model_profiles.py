@@ -137,7 +137,9 @@ async def delete_profile(profile_id: str) -> None:
 
 @router.post("/model-profiles/{profile_id}/check")
 async def check_profile(profile_id: str) -> dict[str, Any]:
-    """模型兼容性体检（§9.6）：第一期实现基础对话/流式/工具调用/用量四项。"""
+    """模型兼容性体检（§9.6）：基础对话/流式/工具调用/用量四项 + 时延。"""
+    import time as _time
+
     from app.orchestrator.engine import _model_config_from_profile
     from app.runtime.model_client import ModelCaller, ModelError
     from app.runtime.types import ContentBlock
@@ -162,19 +164,27 @@ async def check_profile(profile_id: str) -> dict[str, Any]:
     caller = ModelCaller(cfg)
     checks: list[dict[str, Any]] = []
 
-    # 1. 基础对话
+    # 1. 基础对话（含时延）
+    t0 = _time.monotonic()
     try:
         resp = await caller.create(
             system="你是测试助手。",
             messages=[{"role": "user", "content": "回复：OK"}],
             max_tokens=32,
         )
-        checks.append({"name": "基础对话", "passed": bool(resp.blocks), "detail": ""})
+        checks.append({
+            "name": "基础对话", "passed": bool(resp.blocks), "detail": "",
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+        })
     except ModelError as e:
-        checks.append({"name": "基础对话", "passed": False, "detail": str(e)})
+        checks.append({
+            "name": "基础对话", "passed": False, "detail": str(e),
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+        })
         return {"checks": checks}
 
     # 2. 流式输出
+    t0 = _time.monotonic()
     try:
         got_delta = False
         async for ev in caller.stream(
@@ -185,11 +195,18 @@ async def check_profile(profile_id: str) -> dict[str, Any]:
 
             if isinstance(ev, StreamEvent) and ev.kind == "delta":
                 got_delta = True
-        checks.append({"name": "流式输出", "passed": got_delta, "detail": ""})
+        checks.append({
+            "name": "流式输出", "passed": got_delta, "detail": "",
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+        })
     except ModelError as e:
-        checks.append({"name": "流式输出", "passed": False, "detail": str(e)})
+        checks.append({
+            "name": "流式输出", "passed": False, "detail": str(e),
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+        })
 
     # 3. 工具调用
+    t0 = _time.monotonic()
     try:
         resp = await caller.create(
             system="你是测试助手。",
@@ -204,15 +221,27 @@ async def check_profile(profile_id: str) -> dict[str, Any]:
             max_tokens=128,
         )
         has_tool = any(b.type == "tool_use" for b in resp.blocks)
-        checks.append({"name": "工具调用", "passed": has_tool, "detail": ""})
+        checks.append({
+            "name": "工具调用", "passed": has_tool, "detail": "",
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+        })
     except ModelError as e:
-        checks.append({"name": "工具调用", "passed": False, "detail": str(e)})
+        checks.append({
+            "name": "工具调用", "passed": False, "detail": str(e),
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+        })
 
     # 4. 用量返回
     checks.append({
         "name": "用量返回",
         "passed": resp.usage.input_tokens > 0 or resp.usage.output_tokens > 0,
         "detail": f"in={resp.usage.input_tokens} out={resp.usage.output_tokens}",
+        "latency_ms": 0,
     })
     _ = ContentBlock
-    return {"checks": checks}
+    return {
+        "checks": checks,
+        "ok": all(c["passed"] for c in checks),
+        "base_url": cfg.base_url,
+        "model": cfg.model,
+    }

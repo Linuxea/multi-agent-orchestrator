@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    DateTime,
     Enum,
     Float,
     ForeignKey,
@@ -115,7 +117,7 @@ class Secret(IdMixin, Base):
     name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     encrypted_value: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default="")
-    last_used_at: Mapped[str | None] = mapped_column(default=None)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
 
 
 class Tool(IdMixin, Base):

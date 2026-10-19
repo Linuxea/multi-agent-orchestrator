@@ -94,9 +94,91 @@ async def delete_tool(tool_id: str) -> None:
 
 @router.post("/tools/{tool_id}/test")
 async def test_tool(tool_id: str) -> dict[str, Any]:
-    """连接测试（第二期实现真实测试；第一期返回未实现说明）。"""
+    """连接测试（§8）：MCP 连接 + 发现；HTTP 工具探测；配置校验。"""
+    from app.tools.service import ToolService
+
     async with db_session() as session:
         t = await session.get(Tool, tool_id)
         if t is None:
             raise HTTPException(404, "tool 不存在")
-        return {"status": "untested", "message": "工具测试在第二期实现"}
+        result = await ToolService().test_tool(session, t)
+        return result
+
+
+@router.post("/tools/{tool_id}/discover")
+async def discover_tool(tool_id: str) -> dict[str, Any]:
+    """MCP 子工具发现：写入 discovered 缓存（执行器物化时使用）。"""
+    from app.tools.service import ToolService
+
+    async with db_session() as session:
+        t = await session.get(Tool, tool_id)
+        if t is None:
+            raise HTTPException(404, "tool 不存在")
+        try:
+            tools = await ToolService().discover_tool(session, t)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return {"tools": tools}
+
+
+# ----------------------------------------------------------------------
+# agent 工具绑定（§8.4、§8.9）
+# ----------------------------------------------------------------------
+class BindingBody(BaseModel):
+    tool_id: str
+    permission: str | None = None  # allow / ask / deny；空表示沿用工具默认
+    enabled_subtools: list[str] | None = None
+
+
+@router.get("/agents/{agent_id}/tool-bindings")
+async def list_bindings(agent_id: str) -> list[dict[str, Any]]:
+    from app.tools.service import ToolService
+
+    async with db_session() as session:
+        pairs = await ToolService().bindings_for_agent(session, agent_id)
+        out: list[dict[str, Any]] = []
+        for t, b in pairs:
+            out.append(
+                {
+                    "tool_id": t.id,
+                    "tool_slug": t.slug,
+                    "tool_name": t.name,
+                    "kind": t.kind.value,
+                    "permission": b.permission.value if b.permission else None,
+                    "enabled_subtools": b.enabled_subtools,
+                }
+            )
+        return out
+
+
+@router.put("/agents/{agent_id}/tool-bindings", status_code=201)
+async def put_binding(agent_id: str, body: BindingBody) -> dict[str, Any]:
+    from app.tools.service import ToolService
+
+    async with db_session() as session:
+        try:
+            binding = await ToolService().upsert_binding(
+                session,
+                agent_id=agent_id,
+                tool_id=body.tool_id,
+                permission=body.permission,
+                enabled_subtools=body.enabled_subtools,
+            )
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        return {
+            "agent_id": agent_id,
+            "tool_id": body.tool_id,
+            "permission": binding.permission.value if binding.permission else None,
+            "enabled_subtools": binding.enabled_subtools,
+        }
+
+
+@router.delete("/agents/{agent_id}/tool-bindings/{tool_id}", status_code=204)
+async def delete_binding(agent_id: str, tool_id: str) -> None:
+    from app.tools.service import ToolService
+
+    async with db_session() as session:
+        removed = await ToolService().remove_binding(session, agent_id, tool_id)
+        if not removed:
+            raise HTTPException(404, "绑定不存在")

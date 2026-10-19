@@ -12,6 +12,9 @@ import sys
 import time
 from typing import Any
 
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "echo",
@@ -127,11 +130,13 @@ def serve_stdio() -> None:
             sys.stdout.flush()
 
 
-def serve_http(port: int) -> None:
-    import uvicorn
-    from fastapi import FastAPI, Request
-    from fastapi.responses import JSONResponse
+def build_http_app() -> Any:
+    """构建 HTTP 模拟服务 app。
 
+    注意：本文件启用了 `from __future__ import annotations`（延迟求值），
+    FastAPI/Request 必须在模块级导入，否则嵌套路由的 "Request" 注解
+    无法解析，request 会被误判为查询参数（真实 MCP 客户端验证时发现的缺陷）。
+    """
     app = FastAPI(title="Mock MCP (HTTP)")
 
     @app.post("/mcp")
@@ -145,7 +150,13 @@ def serve_http(port: int) -> None:
             return JSONResponse(status_code=202, content={})
         return response
 
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    return app
+
+
+def serve_http(port: int) -> None:
+    import uvicorn
+
+    uvicorn.run(build_http_app(), host="127.0.0.1", port=port, log_level="warning")
 
 
 def main() -> None:

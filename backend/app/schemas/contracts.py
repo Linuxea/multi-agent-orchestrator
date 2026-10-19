@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.enums import BlockerType, ReportStatus
 from app.schemas.common import Budget
@@ -97,3 +97,9 @@ class TaskReport(BaseModel):
     blocker: Blocker | None = None
     suggestions: list[str] = Field(default_factory=list)
     attempted: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _blocker_required(self) -> TaskReport:
+        if self.status in (ReportStatus.blocked, ReportStatus.failed) and self.blocker is None:
+            raise ValueError("blocked/failed 回报必须附 blocker")
+        return self

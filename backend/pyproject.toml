@@ -18,6 +18,8 @@ dependencies = [
     "cryptography>=43",
     "python-multipart>=0.0.32",
     "socksio>=1.0.0",
+    "claude-agent-sdk>=0.2.168",
+    "mcp>=1.14",
 ]
 
 [project.optional-dependencies]

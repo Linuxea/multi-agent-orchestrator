@@ -173,6 +173,14 @@ class Harness:
         evs = await self.events(run_id)
         return [e.type for e in evs]
 
+    async def debug_events(self, run_id: str) -> str:
+        """断言失败时的诊断信息。"""
+        evs = await self.events(run_id)
+        lines = [
+            f"#{e.seq} {e.type} {e.task_key or ''} {str(e.payload)[:160]}" for e in evs
+        ]
+        return "\n".join(lines)
+
     async def run_row(self, run_id: str) -> Run:
         async with db_session() as session:
             run = await session.get(Run, run_id)

@@ -6,6 +6,27 @@
 
 D-<期数>.<序号>，按开发顺序递增。
 
+## 第二期（SdkExecutor + 工具库）——设计与实现决策
+
+- **D-2.1 claude-agent-sdk 版本线**：PyPI 当前版本线为 0.2.x（无 1.x），实测 0.2.168。适配层按真实 API 编写：自定义进程内工具经 `@sdk.tool` + `create_sdk_mcp_server`（options.tools 已不接受 Tool 列表）；会话用 `ClaudeSDKClient`（connect / receive_response / query / interrupt）。
+- **D-2.2 mcp 客户端包差异**：本版本 `streamable_http_client` 不收 headers —— 头部经自有 httpx2 AsyncClient 注入并由连接负责关闭；`sse_client` 直接收 headers；两传输上下文均产出二元组。
+- **D-2.3 mockmcp HTTP 缺陷修复**：`from __future__ import annotations` + Request 仅在 serve_http 函数内导入，导致路由参数注解无法在模块全局解析，FastAPI 把 request 误判为查询参数（422）；stdio 不受影响。该缺陷由"真实 MCP 客户端验证 mock"一步暴露（§14 验收要求的价值证明）。修复：拆出 `build_http_app`，FastAPI 导入上移模块级。
+- **D-2.4 SdkExecutor 权限模式**：`permission_mode="acceptEdits"` + `can_use_tool` 全量接平台权限链：工作目录内文件编辑由 CLI 沙箱免审；Bash/WebFetch/MCP/自定义工具走 §8.9 链 + §11 审批。`setting_sources=["project"]`，不读宿主用户级 ~/.claude 配置，防止宿主配置泄漏进 agent 会话。
+- **D-2.5 演示降级条件化**（修订 D-1.15）：CLI 演示模式不再无条件降级；`sdk_runtime_available()`（SDK 可导入 + claude CLI 在 PATH / ~/.claude/local / PLATFORM_CLAUDE_CLI_PATH）不可用才降级为 lite。SdkExecutor 恒注册（缺失运行时在尝试级以明确错误崩溃并走 §5.7 自动重试/阻塞路径）。
+- **D-2.6 权限链判定顺序**（§8.9 细化）：平台工具（submit_report）与 CLI 只读工具放行 → 未注册/已停用 deny → 非 builtin 工具必须绑定 → enabled_subtools 范围 → 运行级记忆命中放行 → 绑定权限覆盖工具默认 → bash 类调用命中高危命令表强制 deny（优先于 ask）。
+- **D-2.7 内置工具注册行**：CLI 内建能力（bash/write/edit/web_fetch/web_search）建 kind=builtin 的 Tool 行，binding 可选；无绑定时用 default_permission（bash/web_* 默认 ask，write/edit 默认 allow——写文件被限制在工作目录内，见 D-2.4）。
+- **D-2.8 MCP 子工具 schema 来源**：lite 执行器的工具定义来自 Tool.discovered（经 /test 或 /discover 刷新）；物化时不做在线发现（避免运行时网络依赖与不稳定）；未发现则该工具不暴露。sdk 执行器经 CLI 自行发现，enabled_subtools 由权限链把守。
+- **D-2.9 密钥下发面**：MCP 配置物化时解密，仅经进程内存传给执行器（sdk：options.mcp_servers；lite：Toolbox 连接），不写入工作目录任何文件；skills/commands/hooks 落盘 .claude/（hooks 命令中的密钥经 CLI env 注入而非写入 settings.json）。
+- **D-2.10 脱敏边界**：tool.call.* 事件参数与结果摘要、审批单入参数据经 SecretMasker（≤4 字符跳过）；lite 执行器返回给模型的工具结果同样脱敏；sdk 执行器内 CLI 自行产生的工具结果不脱敏（密钥本就供其调用外部服务使用）。
+- **D-2.11 审批等待语义**：ask → Approval(pending) + attempt/task → awaiting_approval，执行协程挂起于 future（占用并发上限但可被 quiesce 观测为"未静止"）；用户决定经 ApprovalGate.resolve 唤醒；超时（approval_timeout_minutes）→ expired + 按拒绝恢复。remember 三档：once 不记忆；this_run 记 (run, agent, tool) 运行内放行；always_for_agent 把绑定权限持久化为 allow。
+- **D-2.12 Secret.last_used_at 列类型修正**：第一期模型误声明 String，第二期权限链开始真正写入；迁移 a2f7c31d9e04 改为 DateTime（SQLite batch_alter）。
+- **D-2.13 TaskReport 校验增强**：blocked/failed 回报必须附 blocker（pydantic model_validator，与工具描述及规格契约一致）。
+- **D-2.14 工具调用事件序**：被拒调用只发 tool.call.blocked（不发 started/finished）；放行调用 started → 执行 → finished。lite 由执行器发；sdk 由 AssistantMessage(tool_use) → UserMessage(tool_result) 翻译，can_use_tool 仅裁权限不发事件。
+- **D-2.15 SdkExecutor 兜底回报**：ResultMessage 无捕获回报时，预算耗尽走 budget_exhausted 自动回报，否则走 no_report 兜底（均 §5.4 与 lite 一致）；usage 逐轮累计（AssistantMessage）+ 终值取 max（ResultMessage 为累计总量）。
+- **D-2.16 模型体检扩展（§9.6）**：四项检查每项附 latency_ms，响应增加汇总 ok / base_url / model。
+- **D-2.17 custom_python 工具**：默认停用（allow_custom_python_tools=False）；启用后以子进程 `python -c` 执行（cwd=工作目录、stdin 传参、60s 超时），返回值同样脱敏。
+- **D-2.18 审批/权限链测试策略**：SdkExecutor 单元测试用伪 SDK 模块（tests/fakesdk.py，monkeypatch _load_sdk）覆盖选项装配/事件翻译/权限回调/兜底；真实 Claude Code 运行时不在本环境，真机链路留待有 claude CLI 的环境冒烟（同 real_model 跳过策略可扩展）。
+
 ## 第 0–1 期（测试基础设施 + 协调引擎骨架）——设计与实现决策
 
 ### 实现过程中的补充决策（D-1.15 起）

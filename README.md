@@ -47,11 +47,35 @@ platform init                       初始化数据库 + 预置 agent
 platform run "需求" [--auto-approve] 运行一次需求，终端打印事件流
 ```
 
+## 第二期新增：执行引擎与工具库
+
+- **SdkExecutor**（`app/runtime/sdk.py`）：基于 claude-agent-sdk 的 Claude Code 运行时。
+  需要环境内有 `claude` CLI（PATH / `~/.claude/local` / `PLATFORM_CLAUDE_CLI_PATH`）；
+  不可用时尝试以明确错误崩溃（演示模式自动降级 lite，见 D-2.5）。
+  - 模型经 `ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL` 环境变量指向 agent 的模型配置（任意 Anthropic 兼容端点）；
+  - 工作目录内文件编辑免审（acceptEdits），其余工具全部经平台权限链与审批。
+- **工具库**（`app/tools/`）：MCP（stdio / streamable HTTP）、Skills、Commands、Hooks、
+  custom_http / custom_python 工具；注册 → 测试 → 发现 → 绑定（`/tools`、
+  `/tools/{id}/test|discover`、`/agents/{id}/tool-bindings`）。
+- **权限与审批**（§8.9、§11）：allow / ask / deny 三级判定链 + 高危命令表；
+  ask 触发审批单（任务转 awaiting_approval），`POST /approvals/{id}/decide`
+  支持 remember = once / this_run / always_for_agent；超时自动 expired。
+- **密钥运行时**（§8.8、§11）：工具配置内 `{"$secret": "名称"}` 引用物化时解密、
+  仅经内存下发；事件流与审批参数一律脱敏；任何接口不回明文。
+
+### 真实 Claude Code 运行时冒烟（可选）
+
+```bash
+npm install -g @anthropic-ai/claude-code   # 或已有 claude CLI
+export PLATFORM_CLAUDE_CLI_PATH=$(which claude)
+# agent 的模型配置指向兼容端点后，executor=sdk 的 agent 即走 Claude Code 运行时
+```
+
 ## 测试与质量
 
 ```bash
 cd backend
-uv run pytest                     # 全部自动化测试（模拟模型，无需密钥）
+uv run pytest                     # 全部自动化测试（模拟模型 + 模拟 MCP，无需密钥）
 uv run ruff check app tests       # 代码风格
 uv run mypy app                   # strict 类型检查
 DEEPSEEK_API_KEY=sk-... uv run pytest -m real_model   # 真实模型冒烟（可选）
@@ -62,6 +86,12 @@ uv run alembic upgrade head       # 数据库迁移
 越界派发拒绝、rationale 强制、并行上限、依赖解锁、协调规则逐行剧本测试、
 最大尝试次数、重启恢复、事件流重建一致性。
 
+第二期验收清单（§14.3）：SdkExecutor 装配与运行时缺失降级、MCP 双传输
+注册/测试/发现/绑定/执行、权限链全路径（默认/绑定/停用/子工具/高危/记忆）、
+审批 approve / reject / remember 三档 / 超时 expired、密钥解析与事件脱敏、
+模型体检（四项 + 时延）、mockmcp 对照真实 MCP 客户端 SDK 验证、
+工作目录物化。
+
 ## 部署
 
 - Docker：`docker-compose.yml`（backend + PostgreSQL 16；前端第三期接入）
@@ -71,7 +101,7 @@ uv run alembic upgrade head       # 数据库迁移
 
 - [x] 第 0 期 测试基础设施（模拟模型服务 / 模拟 MCP / 冒烟测试框架）
 - [x] 第一期 协调引擎骨架
-- [ ] 第二期 执行引擎与工具库（SdkExecutor、MCP、Skills、审批链路）
+- [x] 第二期 执行引擎与工具库（SdkExecutor、MCP、Skills、审批链路）
 - [ ] 第三期 完整界面
 - [ ] 第四期 Agent 工厂与团队
 - [ ] 第五期 增强功能

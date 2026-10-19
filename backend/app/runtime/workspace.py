@@ -19,7 +19,8 @@ PLATFORM_PREAMBLE = """你是一个多 agent 协作平台中的执行型子 agen
 CONTRACT_SECTION = """## 平台契约（必须遵守）
 
 - 工作目录：`inputs/` 是上游输入（只读）；你的交付物必须写入 `out/` 目录；草稿放 `work/`。
-- 结束方式：你只能通过调用 `submit_report` 工具提交结构化回报来结束任务。
+- 结束方式：你只能通过调用 `submit_report` 工具提交结构化回报来结束任务
+  （SDK 执行器中该工具的完整名称是 `mcp__platform__submit_report`）。
 - 回报状态：
   - `done`：达到全部验收标准（附交付物与逐条自检）。
   - `partial`：完成一部分（附已完成交付物、自检、blocker 说明缺口）。

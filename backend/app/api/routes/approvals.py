@@ -71,3 +71,10 @@ async def decide(approval_id: str, body: DecideBody) -> None:
                 "note": body.note,
             },
         )
+    # 唤醒等待中的执行器，并按 remember 记忆（once / this_run / always_for_agent）
+    await container.scheduler.approvals.resolve(
+        approval_id,
+        approved=body.approved,
+        note=body.note,
+        remember=RememberScope(body.remember),
+    )
