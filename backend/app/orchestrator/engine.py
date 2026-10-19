@@ -836,7 +836,8 @@ class CoordinationEngine:
                 tasks_snapshot=snapshot,
                 change_reason=reason,
                 proposed_by="orchestrator",
-                approved=run.status != RunStatus.awaiting_plan_approval,
+                # awaiting 状态已在入口拒绝（审批门槛），到达此处即立即生效
+                approved=True,
             )
             session.add(plan)
             await session.flush()

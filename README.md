@@ -135,20 +135,22 @@ export PLATFORM_CLAUDE_CLI_PATH=$(which claude)
 
 ```bash
 cd backend
-uv run pytest                     # mock 层（无需密钥）
-DEEPSEEK_API_KEY=sk-... uv run pytest -m real_model   # 真实层（约 100s，<$0.01）
-uv run python -m tests.e2e.test_phase3_ui_smoke   # 界面链路冒烟（真实进程 + dist + WS）
-uv run python -m tests.e2e.test_phase4_ui_smoke   # 第四期链路冒烟（工厂/编队/剧本映射）
+uv run pytest                     # 快速回归层（状态机/权限/调度等纯逻辑）
+DEEPSEEK_API_KEY=sk-... uv run pytest -m real_model   # 真实模型层（约 4 分钟，<$0.05）
+DEEPSEEK_API_KEY=sk-... uv run python -m tests.e2e.test_phase3_ui_smoke   # 界面链路冒烟（真实进程 + 真实模型）
+DEEPSEEK_API_KEY=sk-... uv run python -m tests.e2e.test_phase4_ui_smoke   # 第四期链路冒烟（工厂/编队/剧本，真实模型）
 uv run ruff check app tests       # 代码风格
 uv run mypy app                   # strict 类型检查
 uv run alembic upgrade head       # 数据库迁移
 ```
 
-真实层覆盖矩阵：协议形状（双协议 × 混合轮/多工具/长循环/thinking 回传）、
-完整编排闭环（计划→派发→真实 worker 执行→复核→终答）、驳回修订循环、
-多轮澄清推进、工厂起草（agent/team）。可用 `DEEPSEEK_MODEL` 换模型、
-`DEEPSEEK_BASE_URL`/`DEEPSEEK_OPENAI_BASE_URL` 换端点；session 结束打印用量与
-成本估算（`[real-model cost]`）。CI 建议：PR 跑 mock 层，nightly 带 key 跑真实层。
+验证原则：**所有业务链路（协议往返、编排闭环、执行、工厂、UI API 面）一律由真实端点驱动**；
+快速回归层仅覆盖无模型交互的纯逻辑（状态机、权限链、预算、熔断计数），不作为链路正确性的依据。
+真实层覆盖矩阵：协议形状（双协议 × 混合轮/多工具/长循环/thinking 回传）、完整编排闭环
+（计划→派发→真实 worker 执行→复核→终答）、驳回修订循环、多轮澄清推进、工厂起草、
+UI 全 API 面（静态服务/计划批准/事件补发/WS/认证/编队/剧本阶段映射）。
+可用 `DEEPSEEK_MODEL` 换模型、`DEEPSEEK_BASE_URL`/`DEEPSEEK_OPENAI_BASE_URL` 换端点；
+session 结束打印用量与成本估算（`[real-model cost]`）。CI 建议：PR 跑快速层，nightly 带 key 跑全部真实层。
 
 第一期验收清单（§14.2）全部有对应测试：状态机逐条转换、非法转换留痕、
 越界派发拒绝、rationale 强制、并行上限、依赖解锁、协调规则逐行剧本测试、

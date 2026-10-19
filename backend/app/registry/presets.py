@@ -159,10 +159,17 @@ async def seed_presets(session: AsyncSession) -> list[Agent]:
     if profile is None:
         return created
 
+    # 运行时无 Claude Code CLI 时 sdk 执行器启动即崩（真实事故两连撞）；
+    # 创建时即按可用性降级 lite，覆盖首启与模型配置就绪后的补种两条路径
+    from app.runtime.sdk import sdk_runtime_available
+
+    runtime_ok = sdk_runtime_available()
+
     for p in _PRESETS:
         existing = await registry.get_agent_by_slug(session, p["slug"])
         if existing is not None:
             continue
+        executor = p["executor"] if runtime_ok or p["executor"] != ExecutorKind.sdk else ExecutorKind.lite
         agent = await registry.create_agent(
             session,
             slug=p["slug"],
@@ -171,7 +178,7 @@ async def seed_presets(session: AsyncSession) -> list[Agent]:
             role_detail=p["role_detail"],
             capability_tags=p["tags"],
             system_prompt=p["prompt"],
-            executor=p["executor"].value,
+            executor=executor.value,
             model_profile_id=profile.id,
             default_budget={"max_turns": 30, "max_cost": 1.0, "max_wall_seconds": 1800},
             status=AgentStatus.active.value,

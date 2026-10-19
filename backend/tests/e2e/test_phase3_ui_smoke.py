@@ -1,7 +1,8 @@
-"""第三期界面链路冒烟（真实进程）：
+"""第三期界面链路冒烟（真实进程 + 真实模型）：
 
-启动 uvicorn（含 dist 静态服务）+ 模拟模型，走 UI 依赖的完整 API 面：
-静态首页 / 认证开关 / 会话消息→运行 / 事件补发 / WS 订阅推送 / 交付物清单。
+启动 uvicorn（含 dist 静态服务），模型调用全部走真实端点（DEEPSEEK_API_KEY 必需），
+走 UI 依赖的完整 API 面：静态首页 / 认证开关 / 会话消息→运行 / 计划批准 / 事件补发 /
+WS 订阅推送 / 交付物清单。不使用任何模拟模型。
 """
 
 from __future__ import annotations
@@ -23,8 +24,12 @@ import httpx  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]  # platform/
 BACKEND = ROOT / "backend"
-WORK = Path("/tmp/opencode/phase3-smoke")
+WORK = Path("/tmp/opencode/phase3-smoke-real")
 WORK.mkdir(parents=True, exist_ok=True)
+
+DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash")
+DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic")
 
 
 def free_port() -> int:
@@ -65,7 +70,10 @@ async def ws_smoke(ws_port: int, run_id: str, expect_types: set[str]) -> list[di
 
 
 def main() -> int:
-    model_port, api_port = free_port(), free_port()
+    if not DEEPSEEK_KEY:
+        print("✗ 未设置 DEEPSEEK_API_KEY：真实模型冒烟无法运行（本冒烟不使用模拟模型）")
+        return 2
+    api_port = free_port()
     db = WORK / "smoke.db"
     if db.exists():
         db.unlink()
@@ -75,20 +83,9 @@ def main() -> int:
         "PLATFORM_DATABASE_URL": f"sqlite+aiosqlite:///{db}",
         "PLATFORM_DATA_DIR": str(WORK / "data"),
         "PLATFORM_MASTER_KEY": "z0GFc6hvEB6iFpRlK3YD8M_x1V2wQ4t7S6uJ9nB0kCw=",
-        "MOCK_MODEL_URL": f"http://127.0.0.1:{model_port}",
     }
     procs: list[subprocess.Popen] = []
     try:
-        procs.append(
-            subprocess.Popen(
-                [
-                    sys.executable, "-m", "tests.mockmodel.server_main",
-                    "--port", str(model_port),
-                    "--script", "tests/scripts/multi_domain_research.yaml",
-                ],
-                cwd=BACKEND,
-            )
-        )
         procs.append(
             subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(api_port)],
@@ -96,7 +93,6 @@ def main() -> int:
                 env=env,
             )
         )
-        wait_http(f"http://127.0.0.1:{model_port}/health")
         wait_http(f"http://127.0.0.1:{api_port}/healthz")
         base = f"http://127.0.0.1:{api_port}"
 
@@ -106,27 +102,54 @@ def main() -> int:
         r = httpx.get(base + "/")
         checks.append(("GET / 服务前端 index.html", r.status_code == 200 and "root" in r.text and "多 Agent 协调平台" in r.text, f"status={r.status_code}"))
 
-        # 2. 初始化（预置 agent + mock 模型）
+        # 2. 真实模型配置（密钥走密钥库，端点真实可达）
         r = httpx.post(base + "/api/v1/sessions", json={"title": "界面冒烟会话"})
         assert r.status_code == 201, r.text
         session_id = r.json()["id"]
 
+        r = httpx.post(
+            base + "/api/v1/model-profiles",
+            json={
+                "name": "ds-real-smoke",
+                "protocol": "anthropic_messages",
+                "base_url": DEEPSEEK_BASE,
+                "model": DEEPSEEK_MODEL,
+                "max_output_tokens": 8192,
+                "context_window": 128000,
+                "is_default_orchestrator": True,
+                "is_default_worker": True,
+                "api_key": DEEPSEEK_KEY,
+            },
+            timeout=30,
+        )
+        assert r.status_code in (200, 201), r.text
+
         r = httpx.get(base + "/api/v1/agents")
         checks.append(("GET /agents 预置 agent", r.status_code == 200 and len(r.json()) >= 11, f"n={len(r.json())}"))
         r = httpx.get(base + "/api/v1/model-profiles")
-        checks.append(("GET /model-profiles 模拟模型", r.status_code == 200 and len(r.json()) >= 1, ""))
+        checks.append(("GET /model-profiles 真实模型配置", r.status_code == 200 and len(r.json()) >= 1, ""))
         r = httpx.get(base + "/api/v1/tools")
         checks.append(("GET /tools 内置工具", r.status_code == 200 and len(r.json()) >= 5, f"n={len(r.json())}"))
         r = httpx.get(base + "/api/v1/settings")
         checks.append(("GET /settings", r.status_code == 200 and "plan_approval_mode" in r.json(), ""))
 
-        # 3. 发消息 → 创建运行 → 待批计划时模拟 UI 计划卡「通过」→ 跑到终态
-        r = httpx.post(f"{base}/api/v1/sessions/{session_id}/messages",
-                       json={"content": "调研 2026 年 AI 编程工具市场并写一份简报"}, timeout=30)
+        # 3. 发消息 → 真实模型编排 → 待批计划时模拟 UI 计划卡「通过」→ 跑到终态
+        r = httpx.post(
+            f"{base}/api/v1/sessions/{session_id}/messages",
+            json={
+                "content": (
+                    "请创建一个包含一个任务的小计划：让 researcher 用一句话回答"
+                    "「2026 年最流行的编程语言是什么」，复核通过后给出最终答复。"
+                    "不需要使用外部工具，凭模型知识完成。"
+                )
+            },
+            timeout=30,
+        )
         assert r.status_code == 201, r.text
         run_id = r.json()["run_id"]
 
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + 300
+        answered_questions = 0
         outcome = None
         approved_at_waiting = False
         while time.monotonic() < deadline:
@@ -141,7 +164,15 @@ def main() -> int:
             if run["status"] in ("completed", "failed", "cancelled"):
                 outcome = run["outcome"]
                 break
-            time.sleep(1.0)
+            # 澄清提问自动应答（最多 2 轮；question_id 留空 = 回答最新提问）
+            if run["status"] == "clarifying" and answered_questions < 2:
+                answered_questions += 1
+                httpx.post(
+                    f"{base}/api/v1/runs/{run_id}/answers",
+                    json={"answer": "按任务单直接完成，无需补充信息", "question_id": None},
+                    timeout=15,
+                )
+            time.sleep(1.5)
         checks.append(("待批计划 → UI 计划卡批准生效", approved_at_waiting, ""))
         checks.append(("运行到达终态", outcome in ("success", "partial", "failed"), f"status={run['status']} outcome={outcome}"))
 
@@ -149,11 +180,20 @@ def main() -> int:
         run = r.json()
         checks.append(("运行详情含任务/预算/答复", bool(run["tasks"]) and run["final_answer"] is not None, f"tasks={len(run['tasks'])}"))
 
-        r = httpx.get(f"{base}/api/v1/runs/{run_id}/events?after_seq=0")
-        events = r.json()["items"]
-        types = {e["type"] for e in events}
+        # 翻页取全量事件（真实模型单 run 可达千级，接口单页 500）
+        all_events: list[dict[str, Any]] = []
+        after = 0
+        for _ in range(20):
+            r = httpx.get(f"{base}/api/v1/runs/{run_id}/events", params={"after_seq": after})
+            page = r.json()["items"]
+            all_events.extend(page)
+            if len(page) < 500:
+                break
+            after = page[-1]["seq"]
+        types = {e["type"] for e in all_events}
         checks.append(("事件补发（含计划/派发/复核/终局）",
-                       {"plan.proposed", "attempt.started", "run.completed"} <= types, f"n={len(events)}"))
+                       {"plan.proposed", "attempt.started", "run.completed"} <= types,
+                       f"n={len(all_events)}"))
 
         r = httpx.get(f"{base}/api/v1/runs/{run_id}/artifacts")
         checks.append(("GET /runs/{id}/artifacts", r.status_code == 200, f"n={len(r.json())}"))
@@ -166,7 +206,7 @@ def main() -> int:
 
         # 4. WS 订阅 + 补发
         got = asyncio.run(ws_smoke(api_port, run_id, set()))
-        checks.append(("WS 订阅补发事件", len(got) >= len(events), f"ws={len(got)} http={len(events)}"))
+        checks.append(("WS 订阅补发事件", len(got) >= min(len(all_events), 500), f"ws={len(got)} http={len(all_events)}"))
 
         # 5. 访问密码启用 → 401 → 携带密钥 200
         r = httpx.patch(base + "/api/v1/settings", json={"changes": {"access_password": "smoke-key"}})

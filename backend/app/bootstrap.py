@@ -83,7 +83,9 @@ async def seed_initial_data(mock_url: str = "") -> tuple[int, int, int]:
     async with db_session() as session:
         builtins = await seed_builtin_tools(session)
         created = await seed_presets(session)
-    downgraded = await demo_downgrade_executors() if mock_url else 0
+    # 运行时无 Claude Code CLI 时 sdk 执行器必然启动即崩，与模型真假无关（D-2.5）；
+    # 原先仅在演示（mock）模式降级，真实部署首次启动就撞 sdk 崩溃（真实事故）
+    downgraded = await demo_downgrade_executors()
     return len(builtins), len(created), downgraded
 
 

@@ -104,6 +104,11 @@ async def create_profile(body: ModelProfileCreate) -> dict[str, Any]:
         )
         session.add(profile)
         await session.flush()
+        # 真实部署时序修复：首启种子在用户建模型配置前运行（无 default worker
+        # 可绑定而跳过预置 agent），此处配置就绪后立即补种（幂等）
+        from app.registry.presets import seed_presets
+
+        await seed_presets(session)
         return _profile_out(profile)
 
 
@@ -133,6 +138,9 @@ async def update_profile(profile_id: str, body: dict[str, Any]) -> dict[str, Any
 
             p.thinking = ThinkingMode(str(body["thinking"]))
         await session.flush()
+        from app.registry.presets import seed_presets
+
+        await seed_presets(session)
         return _profile_out(p)
 
 
