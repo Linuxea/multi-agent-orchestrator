@@ -27,3 +27,6 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# Vite/TS 构建缓存
+*.tsbuildinfo
