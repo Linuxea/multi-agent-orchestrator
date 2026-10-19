@@ -82,6 +82,12 @@ def create_app() -> FastAPI:
 
         await seed_initial_data(configured_mock_url())
 
+        # 服务重启恢复：孤儿 run（编排中挂起/进程死亡）重新唤醒、运行中尝试标记崩溃重试。
+        # 不调用则 run 永久停留在中断前的状态（真实事故：网络挂起杀循环后无人恢复）。
+        from app.bootstrap import get_container as _get_container
+
+        await _get_container().recover()
+
         # 第五期增强：过期工作目录定期清理（workspace_retention_days）
         import asyncio
 

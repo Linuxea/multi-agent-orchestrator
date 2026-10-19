@@ -351,7 +351,16 @@ class CoordinationEngine:
 
         try:
             while True:
-                response = await caller.create(system=system, messages=thread, tools=tools)
+                try:
+                    response = await asyncio.wait_for(
+                        caller.create(system=system, messages=thread, tools=tools),
+                        timeout=get_config().model_call_deadline_seconds,
+                    )
+                except TimeoutError as e:
+                    raise ModelError(
+                        f"模型调用超过墙钟 {get_config().model_call_deadline_seconds:.0f}s"
+                        "（网络挂起看门狗，请重试或稍后再试）"
+                    ) from e
                 await self._track_orchestrator_usage(run_id, response.usage, caller.cfg)
 
                 for block in response.blocks:

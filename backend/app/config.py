@@ -50,6 +50,13 @@ class AppConfig(BaseSettings):
     # 模型调用重试（§9.5：429/5xx 指数退避 3 次）
     model_retry_delays: tuple[float, ...] = (1.0, 4.0, 16.0)
 
+    # 模型调用墙钟看门狗（秒）：SDK/httpx 超时在半开连接等场景可能永不触发，
+    # 编排层用 asyncio.wait_for 绝对兜底，防一次网络挂起永久卡死运行
+    model_call_deadline_seconds: float = 600.0
+
+    # 流式调用单次读取间隔上限（秒）：正常流式 delta 密集，超此间隔无事件视为挂起
+    model_stream_idle_seconds: float = 180.0
+
     # 日志
     log_level: str = "INFO"
 

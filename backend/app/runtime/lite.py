@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -46,6 +47,36 @@ SUBMIT_REPORT_TOOL: dict[str, Any] = {
 
 _BUDGET_REMINDER_RATIO = 0.8
 _INVALID_REPORT_LIMIT = 2
+
+
+async def _stream_with_watchdog(caller: ModelCaller, **kw: Any) -> Any:
+    """流式调用看门狗：单次读取超过 model_stream_idle_seconds 无事件即判定挂起。
+
+    背景：半开连接下 SDK 读超时可能永不触发（服务端心跳/内核静默），
+    编排层以 asyncio.wait_for 绝对兜底；超时转 ModelError 走既有崩溃路径。
+    """
+    from app.config import get_config
+
+    gen = caller.stream(**kw)
+    try:
+        while True:
+            try:
+                ev = await asyncio.wait_for(
+                    gen.__anext__(), timeout=get_config().model_stream_idle_seconds
+                )
+            except StopAsyncIteration:
+                return
+            except TimeoutError as e:
+                raise ModelError(
+                    f"模型流式响应 {get_config().model_stream_idle_seconds:.0f}s 无事件"
+                    "（网络挂起看门狗）"
+                ) from e
+            yield ev
+    finally:
+        aclose = getattr(gen, "aclose", None)
+        if aclose is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(aclose(), timeout=10)
 
 
 def _cast_event(obj: object) -> asyncio.Event | None:
@@ -99,8 +130,11 @@ class LiteExecutor:
                 try:
                     turn_text: list[str] = []
                     response = None
-                    async for event in caller.stream(
-                        system=ctx.system_prompt, messages=messages, tools=tools
+                    async for event in _stream_with_watchdog(
+                        caller,
+                        system=ctx.system_prompt,
+                        messages=messages,
+                        tools=tools,
                     ):
                         if isinstance(event, ModelResponse):
                             response = event
