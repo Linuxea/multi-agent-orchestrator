@@ -93,6 +93,15 @@ def test_assistant_content_mixed_turn_shape() -> None:
     ], "混合轮 content 必须是扁平 block 数组"
     mc.validate_anthropic_messages([{"role": "assistant", "content": mixed}])
 
+    # thinking 轮：thinking block 最先、携带 signature（Anthropic 要求 tool_use 轮回传）
+    think_b = ContentBlock(type="thinking", text="需要先澄清。", signature="sig1")
+    with_thinking = assistant_content([think_b, text_b], [])
+    assert with_thinking == [
+        {"type": "thinking", "thinking": "需要先澄清。", "signature": "sig1"},
+        {"type": "text", "text": "平台可用角色确认完毕。"},
+    ], "thinking block 应最先且带 signature"
+    mc.validate_anthropic_messages([{"role": "assistant", "content": with_thinking}])
+
     # 纯文本轮 / 纯工具轮
     assert assistant_content([text_b], []) == [{"type": "text", "text": text_b.text}]
     assert assistant_content([], [tool_b])[0]["type"] == "tool_use"

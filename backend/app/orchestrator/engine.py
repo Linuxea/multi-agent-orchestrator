@@ -1013,6 +1013,13 @@ class CoordinationEngine:
                 session, self.events, task, TaskStatus.queued,
                 reason="任务单已提交", actor="orchestrator",
             )
+            # 首次派发即进入执行期：驳回-修订后未经 approve 的计划，
+            # run 若仍停留 planning，scheduler 不会启动尝试（真实场景死队）
+            if run.status == RunStatus.planning:
+                await transition_run(
+                    session, self.events, run, RunStatus.running,
+                    reason=f"计划 v{run.current_plan_version} 派发中", actor="orchestrator",
+                )
             await self.events.emit(
                 session,
                 type="attempt.queued",
@@ -2003,24 +2010,35 @@ class CoordinationEngine:
         return await build_run_digest(session, run, tasks, by_id)
 
     def _compact_thread(self, thread: list[dict[str, Any]], context_window: int) -> None:
-        """超过上下文 60% 时压缩旧轮次（§5.11）。"""
+        """超过上下文 60% 时压缩旧轮次（§5.11）。
+
+        用户消息（需求/补充/回答/驳回理由）完整保留（截 500 字，与 digest 一致）：
+        这些是模型理解意图的唯一来源，压缩即「失忆」；仅压缩 assistant 与工具结果轮。
+        """
         total_chars = sum(len(str(m.get("content"))) for m in thread)
         limit = int(context_window * 3 * 0.6)
         if total_chars <= limit or len(thread) <= 4:
             return
         keep = thread[-4:]
         summary_items: list[str] = []
+        user_items: list[str] = []
         for m in thread[:-4]:
             content = m.get("content")
+            if m.get("role") == "user" and isinstance(content, str):
+                user_items.append(content[:500])
+                continue
             if isinstance(content, str):
                 summary_items.append(content[:200])
             elif isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         summary_items.append(f"调用工具 {block.get('name')}")
-        summary = "【历史压缩】此前唤醒的对话已压缩：\n" + "\n".join(
-            f"- {s[:160]}" for s in summary_items[-20:]
-        )
+        lines = ["【历史压缩】此前唤醒的对话已压缩："]
+        if user_items:
+            lines.append("用户输入（完整保留）：")
+            lines.extend(f"- {u}" for u in user_items)
+        lines.extend(f"- {s[:160]}" for s in summary_items[-20:])
+        summary = "\n".join(lines)
         new_thread: list[dict[str, Any]] = [{"role": "user", "content": summary}]
         new_thread.extend(keep)
         thread.clear()
@@ -2072,6 +2090,12 @@ def assistant_content(
     本函数是唯一组装入口，形状由 tests/unit/test_model_client_shape.py 焊死。
     """
     return [
+        # thinking 必须最先回传（Anthropic：tool_use 轮的 thinking 需原样带回，含 signature）
+        *(
+            {"type": "thinking", "thinking": b.text, "signature": b.signature}
+            for b in blocks
+            if b.type == "thinking" and b.text
+        ),
         *({"type": "text", "text": b.text} for b in blocks if b.type == "text" and b.text),
         *(
             {"type": "tool_use", "id": b.tool_id, "name": b.tool_name, "input": b.tool_input}

@@ -155,7 +155,13 @@ class ModelCaller:
             if block.type == "text":
                 blocks.append(ContentBlock(type="text", text=block.text))
             elif block.type == "thinking":
-                blocks.append(ContentBlock(type="thinking", text=getattr(block, "thinking", "")))
+                blocks.append(
+                    ContentBlock(
+                        type="thinking",
+                        text=getattr(block, "thinking", ""),
+                        signature=getattr(block, "signature", "") or "",
+                    )
+                )
             elif block.type == "tool_use":
                 blocks.append(
                     ContentBlock(
@@ -417,6 +423,10 @@ class _OpenAIChatCaller:
         choices = data.get("choices") or [{}]
         message = dict(choices[0].get("message") or {})
         blocks: list[ContentBlock] = []
+        reasoning = message.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            # 思考型模型（deepseek 等）正文可能为空但思考非空——保留为 thinking block
+            blocks.append(ContentBlock(type="thinking", text=reasoning))
         text = message.get("content")
         if isinstance(text, str) and text:
             blocks.append(ContentBlock(type="text", text=text))

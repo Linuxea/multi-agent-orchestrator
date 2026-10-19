@@ -53,6 +53,8 @@ class ContentBlock:
     tool_id: str = ""
     tool_name: str = ""
     tool_input: dict[str, Any] = field(default_factory=dict)
+    # thinking block 的签名（Anthropic：tool_use 轮回传 thinking 时需携带；兼容端点可空）
+    signature: str = ""
 
 
 @dataclass

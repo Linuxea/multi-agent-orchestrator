@@ -135,3 +135,34 @@ async def test_previous_run_final_answer_visible_to_new_run(env: Any) -> None:
     digest = await _digest_for_run(engine, run2.id)
     assert "市场结论 ABC" in digest, "上一 run 结论应进入新 run 摘要"
     assert "[会话早前输入]" in digest
+
+
+def test_compact_thread_preserves_user_messages() -> None:
+    """历史压缩必须完整保留用户输入（需求/补充/回答），只压缩 assistant 与工具轮。"""
+    from app.orchestrator.engine import CoordinationEngine
+
+    engine = CoordinationEngine.__new__(CoordinationEngine)  # 只用压缩方法，不初始化
+    user_msgs = [
+        {"role": "user", "content": "【系统唤醒】第 1 次。\n【用户需求】调研时重点看国内厂商"},
+        {"role": "assistant", "content": "开始规划。" + "分析" * 400},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "search_agents", "input": {}}
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+        ]},
+        {"role": "assistant", "content": "已检索。" + "结论" * 400},
+        {"role": "user", "content": "【用户回答】答：预算上限 100 元"},
+        {"role": "assistant", "content": "明白。"},
+        {"role": "user", "content": "【系统唤醒】再次唤醒"},
+    ]
+    thread = [dict(m) for m in user_msgs]
+    engine._compact_thread(thread, context_window=100)  # 极小窗口强制触发压缩
+
+    compacted = str(thread[0]["content"])
+    assert "重点看国内厂商" in compacted, "早期用户需求必须在压缩中完整保留"
+    assert "调用工具 search_agents" in compacted, "工具轮应保留摘要行"
+    assert thread[-1]["content"] == "【系统唤醒】再次唤醒", "末 4 条消息应原样保留"
+    # 近期用户回答位于 keep 区应原样保留（不进压缩摘要也可见）
+    whole = "\n".join(str(m.get("content")) for m in thread)
+    assert "预算上限 100 元" in whole, "用户回答不能因压缩丢失"

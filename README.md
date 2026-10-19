@@ -129,16 +129,26 @@ export PLATFORM_CLAUDE_CLI_PATH=$(which claude)
 
 ## 测试与质量
 
+测试分两层：**mock 层**（快速回归，免费、确定）与 **真实模型层**（`real_model` 标记，
+走真实端点，防「mock 测不出的兼容性缺陷」——$defs 引用、消息形状、thinking 回传、
+状态机死局等均由该层捕获）。
+
 ```bash
 cd backend
-uv run pytest                     # 全部自动化测试（模拟模型 + 模拟 MCP，无需密钥）
+uv run pytest                     # mock 层（无需密钥）
+DEEPSEEK_API_KEY=sk-... uv run pytest -m real_model   # 真实层（约 100s，<$0.01）
 uv run python -m tests.e2e.test_phase3_ui_smoke   # 界面链路冒烟（真实进程 + dist + WS）
 uv run python -m tests.e2e.test_phase4_ui_smoke   # 第四期链路冒烟（工厂/编队/剧本映射）
 uv run ruff check app tests       # 代码风格
 uv run mypy app                   # strict 类型检查
-DEEPSEEK_API_KEY=sk-... uv run pytest -m real_model   # 真实模型冒烟（可选）
 uv run alembic upgrade head       # 数据库迁移
 ```
+
+真实层覆盖矩阵：协议形状（双协议 × 混合轮/多工具/长循环/thinking 回传）、
+完整编排闭环（计划→派发→真实 worker 执行→复核→终答）、驳回修订循环、
+多轮澄清推进、工厂起草（agent/team）。可用 `DEEPSEEK_MODEL` 换模型、
+`DEEPSEEK_BASE_URL`/`DEEPSEEK_OPENAI_BASE_URL` 换端点；session 结束打印用量与
+成本估算（`[real-model cost]`）。CI 建议：PR 跑 mock 层，nightly 带 key 跑真实层。
 
 第一期验收清单（§14.2）全部有对应测试：状态机逐条转换、非法转换留痕、
 越界派发拒绝、rationale 强制、并行上限、依赖解锁、协调规则逐行剧本测试、
