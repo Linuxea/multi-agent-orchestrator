@@ -113,16 +113,21 @@ export function buildTimeline(
       } else if (ev.type === "plan.proposed") {
         const pp = p as unknown as PlanEventPayload;
         const plan = plans.find((pl) => pl.version === pp.version);
+        const activeRun = runs.find((x) => x.id === activeRunId);
         items.push({
           key: `ev-${ev.seq}`,
           ts: ev.ts,
           node: (
             <PlanCard
+              runId={activeRunId}
               plan={plan ?? null}
               version={pp.version ?? 0}
               estimatedCost={pp.estimated_cost}
               rationale={pp.rationale ?? ""}
               taskCount={pp.task_count ?? plan?.tasks_snapshot.length ?? 0}
+              pendingApproval={
+                activeRun?.status === "awaiting_plan_approval" && plan?.approved !== true
+              }
             />
           ),
         });
@@ -177,18 +182,50 @@ function isTerminalRun(status: string): boolean {
 }
 
 function PlanCard({
+  runId,
   plan,
   version,
   estimatedCost,
   rationale,
   taskCount,
+  pendingApproval,
 }: {
+  runId: string;
   plan: PlanVersion | null;
   version: number;
   estimatedCost?: number;
   rationale: string;
   taskCount: number;
+  pendingApproval: boolean;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [decided, setDecided] = useState<"approved" | "rejected" | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+
+  const decide = async (action: "approve" | "reject") => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (action === "approve") {
+        await runApi.approvePlan(runId, version);
+        setDecided("approved");
+      } else {
+        await runApi.rejectPlan(runId, version, note.trim() || "用户驳回");
+        setDecided("rejected");
+      }
+    } catch (e) {
+      // 与提问卡同源缺陷：操作失败必须可见，不能静默
+      setError(e instanceof Error ? e.message : "操作失败，请重试");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const showActions = pendingApproval && !plan?.approved && !decided;
+
   return (
     <div className="st-card plan">
       <div className="st-card-head">
@@ -198,12 +235,12 @@ function PlanCard({
           {taskCount} 个任务
           {estimatedCost !== undefined ? ` · 预估 ¥${estimatedCost.toFixed(2)}` : ""}
         </span>
-        {plan ? (
-          plan.approved ? (
-            <span className="chip chip-moss">已通过</span>
-          ) : (
-            <span className="chip chip-ash">未生效</span>
-          )
+        {plan?.approved || decided === "approved" ? (
+          <span className="chip chip-moss">已通过</span>
+        ) : decided === "rejected" ? (
+          <span className="chip chip-ash">已驳回</span>
+        ) : showActions ? (
+          <span className="chip chip-ember">待确认</span>
         ) : null}
       </div>
       {rationale ? <p className="st-card-why">{rationale}</p> : null}
@@ -228,6 +265,36 @@ function PlanCard({
             ))}
           </tbody>
         </table>
+      ) : null}
+      {error ? <p className="st-q-error" role="alert">{error}</p> : null}
+      {showActions ? (
+        <div className="st-plan-actions">
+          <button
+            className="btn-primary btn-sm"
+            disabled={busy}
+            onClick={() => decide("approve")}
+          >
+            通过并开始
+          </button>
+          {rejecting ? (
+            <>
+              <input
+                type="text"
+                value={note}
+                placeholder="驳回理由（会转达给协调者）…"
+                onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && decide("reject")}
+              />
+              <button className="btn btn-sm" disabled={busy} onClick={() => decide("reject")}>
+                提交驳回
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-sm" disabled={busy} onClick={() => setRejecting(true)}>
+              驳回
+            </button>
+          )}
+        </div>
       ) : null}
     </div>
   );

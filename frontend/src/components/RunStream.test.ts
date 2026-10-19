@@ -1,6 +1,7 @@
 /** 时间线组装测试：消息 + 事件卡片合并、事件载荷渲染。 */
 
 import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
 import { buildTimeline } from "./RunStream";
 import type { MessageInfo, PlanVersion } from "../api/types";
 
@@ -86,5 +87,43 @@ describe("buildTimeline", () => {
     ];
     const items = buildTimeline([], events, RUNS, "run_abc123", []);
     expect(items.filter((i) => i.key.startsWith("ev-"))).toHaveLength(0);
+  });
+
+  it("待审批计划卡渲染批准与驳回按钮", () => {
+    // 历史 bug：approvePlan/rejectPlan 全前端零调用，计划待审批时界面无任何确认入口
+    const events = [
+      {
+        id: "e1",
+        seq: 1,
+        type: "plan.proposed",
+        payload: { version: 1, rationale: "r", task_count: 1 },
+        ts: "2026-01-01T00:00:02Z",
+      },
+    ];
+    const runs = [{ id: "run_abc123", status: "awaiting_plan_approval", outcome: null }];
+    const items = buildTimeline([], events, runs, "run_abc123", []);
+    const html = JSON.stringify(
+      items.map((i) => (typeof i.node === "object" ? renderToStaticMarkup(i.node) : "")),
+    );
+    expect(html).toContain("通过并开始");
+    expect(html).toContain("驳回");
+    expect(html).toContain("待确认");
+  });
+
+  it("非待审批状态的计划卡不渲染确认按钮", () => {
+    const events = [
+      {
+        id: "e1",
+        seq: 1,
+        type: "plan.proposed",
+        payload: { version: 1, rationale: "r", task_count: 1 },
+        ts: "2026-01-01T00:00:02Z",
+      },
+    ];
+    const items = buildTimeline([], events, RUNS, "run_abc123", []);
+    const html = JSON.stringify(
+      items.map((i) => (typeof i.node === "object" ? renderToStaticMarkup(i.node) : "")),
+    );
+    expect(html).not.toContain("通过并开始");
   });
 });

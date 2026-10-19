@@ -368,6 +368,19 @@
   font-size: var(--fs-sm);
 }
 
+.st-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.st-plan-actions input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+}
+
 .st-options {
   display: flex;
   flex-wrap: wrap;
