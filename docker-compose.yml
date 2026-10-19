@@ -1,0 +1,38 @@
+version: "3.9"
+
+# 部署骨架（§3.2）：backend + PostgreSQL。前端自第三期接入。
+# 本地无 Docker 启动方式见 README。
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      PLATFORM_DATABASE_URL: postgresql+asyncpg://platform:platform@postgres:5432/platform
+      PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY:?请设置主密钥}
+      PLATFORM_HOST: 0.0.0.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

@@ -1,0 +1,29 @@
+# 运行时数据（规格 §3.3）
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Node / 前端（第三期）
+node_modules/
+dist/
+
+# 本地环境与密钥
+.env
+.env.local
+*.db
+*.db-wal
+*.db-shm
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store
