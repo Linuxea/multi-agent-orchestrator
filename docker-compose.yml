@@ -1,5 +1,3 @@
-version: "3.9"
-
 # 部署骨架（§3.2）：frontend(nginx) + backend + PostgreSQL。
 # 本地无 Docker 启动方式见 README。
 
@@ -19,7 +17,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      PLATFORM_DATABASE_URL: postgresql+asyncpg://platform:platform@postgres:5432/platform
+      PLATFORM_DATABASE_URL: postgresql+psycopg://platform:platform@postgres:5432/platform
       PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY:?请设置主密钥}
       PLATFORM_HOST: 0.0.0.0
     ports:

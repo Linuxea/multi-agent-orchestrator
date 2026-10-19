@@ -94,6 +94,8 @@ class TestRunStateMachine:
             ("awaiting_user", "synthesizing"),
             ("synthesizing", "completed"),
             ("synthesizing", "failed"),
+            # 无任务需求（咨询/寒暄）直接 finalize：planning → completed
+            ("planning", "completed"),
         ]
         for src, dst in documented:
             check_run_transition(RunStatus(src), RunStatus(dst))
@@ -108,7 +110,7 @@ class TestRunStateMachine:
         invalid = [
             ("created", "running"),
             ("completed", "running"),
-            ("planning", "completed"),
+            ("clarifying", "completed"),
             ("clarifying", "synthesizing"),
             ("synthesizing", "planning"),
             ("paused", "synthesizing"),

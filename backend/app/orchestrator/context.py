@@ -5,7 +5,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Agent, Decision, Playbook, Run, Session, Task, Team
+from app.enums import MessageRole
+from app.models import Agent, Decision, Message, Playbook, Run, Session, Task, Team
 from app.schemas.common import Budget, Usage
 
 STATUS_ZH: dict[str, str] = {
@@ -26,14 +27,19 @@ STATUS_ZH: dict[str, str] = {
 }
 
 MAX_DECISIONS_IN_DIGEST = 20
+MAX_USER_MESSAGES_IN_DIGEST = 30
 
 
 async def build_run_digest(
     session: AsyncSession, run: Run, tasks: list[Task], agent_by_id: dict[str, Agent]
 ) -> str:
-    """构造每次唤醒的"运行状态摘要"：需求、计划、最近决策、剩余预算。"""
-    user_request = await _trigger_request(session, run)
-    lines: list[str] = ["## 用户原始需求", "", user_request or "（见对话）", ""]
+    """构造每次唤醒的"运行状态摘要"：用户输入时间线、计划、最近决策、剩余预算。"""
+    user_timeline = await _user_input_timeline(session, run)
+    lines: list[str] = ["## 用户输入（本会话，按时间；含补充/回答/驳回）", "", user_timeline, ""]
+
+    prev_answer = await _previous_run_answer(session, run)
+    if prev_answer:
+        lines += ["## 本会话上一次运行的结论（追问参考）", "", prev_answer, ""]
 
     team_section = await build_team_section(session, run.session_id)
     if team_section:
@@ -73,12 +79,45 @@ async def build_run_digest(
     return "\n".join(lines)
 
 
-async def _trigger_request(session: AsyncSession, run: Run) -> str:
-    from app.models import Message
+async def _user_input_timeline(session: AsyncSession, run: Run) -> str:
+    """会话内全部用户输入按时间排列。
 
-    result = await session.execute(select(Message).where(Message.id == run.trigger_message_id))
-    msg = result.scalar_one_or_none()
-    return msg.content if msg else ""
+    除触发需求外，还包括运行中补充、ask_user 回答与计划驳回理由
+   （后两者落为 user 角色的 Message，见 engine.submit_answer / reject_plan），
+    确保任何用户输入都能进入主 agent 上下文。
+    """
+    result = await session.execute(
+        select(Message)
+        .where(Message.session_id == run.session_id, Message.role == MessageRole.user)
+        .order_by(Message.created_at, Message.id)
+    )
+    msgs = list(result.scalars().all())
+    lines: list[str] = []
+    for m in msgs[-MAX_USER_MESSAGES_IN_DIGEST:]:
+        if m.id == run.trigger_message_id:
+            tag = "本次需求"
+        elif m.run_id == run.id:
+            tag = "本次运行中的新输入"
+        else:
+            tag = "会话早前输入"
+        lines.append(f"- [{tag}] {m.content[:500]}")
+    return "\n".join(lines) if lines else "（无）"
+
+
+async def _previous_run_answer(session: AsyncSession, run: Run) -> str:
+    """同会话最近一次已有结论的运行（供追问场景衔接）。"""
+    result = await session.execute(
+        select(Run)
+        .where(
+            Run.session_id == run.session_id,
+            Run.id != run.id,
+            Run.final_answer.isnot(None),
+        )
+        .order_by(Run.created_at.desc(), Run.id.desc())
+        .limit(1)
+    )
+    prev = result.scalar_one_or_none()
+    return (prev.final_answer or "")[:500] if prev is not None else ""
 
 
 async def build_team_section(session: AsyncSession, session_id: str) -> str:
@@ -175,6 +214,7 @@ ORCHESTRATOR_PROMPT_TEMPLATE = """你是一个多 agent 协作平台的主管。
 
 ## 你的职责
 1. 理解用户需求；信息不足以制定计划时，先向用户提出不超过 3 个关键问题。
+   无需派任务的需求（寒暄、咨询、查看平台状态等）可直接给出答复并 finalize 结束。
 2. 用 search_agents / get_agent / list_playbooks 了解可用人手，只能指派其中状态为可用的 agent。
 3. 制定计划：把需求拆成目标明确、可验收的任务，标明依赖；能并行的尽量并行。
    需求匹配某个团队模板时，以模板为骨架，偏离之处说明理由。

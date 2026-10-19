@@ -29,6 +29,34 @@ def _map_openai_stop(finish: str) -> str:
     return _OPENAI_STOP_MAP.get(finish, "end_turn")
 
 
+def validate_anthropic_messages(messages: list[dict[str, Any]]) -> None:
+    """发送前本地校验消息形状（Anthropic 协议契约），不合法即抛 ModelError。
+
+    背景：兼容端点（如 DeepSeek）对畸形 content 报 422 反序列化错误，难以定位；
+    本地前置校验把问题变成清晰的开发期错误（content 只允许 str 或 block 数组、
+    block 必须带 type、tool_use 必须带 id/name/input、tool_result 必须带 tool_use_id）。
+    """
+    for i, m in enumerate(messages):
+        content = m.get("content")
+        if isinstance(content, str):
+            continue
+        if not isinstance(content, list):
+            raise ModelError(
+                f"messages[{i}].content 必须是字符串或 block 数组，实际是 {type(content).__name__}；"
+                f"role={m.get('role')}"
+            )
+        for j, b in enumerate(content):
+            if not isinstance(b, dict) or not b.get("type"):
+                raise ModelError(
+                    f"messages[{i}].content[{j}] 不是合法 block（缺少 type 字段）：{str(b)[:80]}"
+                )
+            btype = b.get("type")
+            if btype == "tool_use" and ("id" not in b or "name" not in b or "input" not in b):
+                raise ModelError(f"messages[{i}].content[{j}] tool_use 缺少 id/name/input")
+            if btype == "tool_result" and "tool_use_id" not in b:
+                raise ModelError(f"messages[{i}].content[{j}] tool_result 缺少 tool_use_id")
+
+
 class ModelError(RuntimeError):
     """模型调用最终失败（作为 external_error 处理，§5.7）。"""
 
@@ -91,6 +119,7 @@ class ModelCaller:
             "messages": messages,  # type: ignore[typeddict-item]
             "max_tokens": max_tokens or self.cfg.max_output_tokens,
         }
+        validate_anthropic_messages(messages)
         if self.cfg.temperature is not None:
             params["temperature"] = self.cfg.temperature
         if tools:
@@ -286,12 +315,12 @@ class _OpenAIChatCaller:
                 elif btype == "tool_use":
                     tool_calls.append(
                         {
-                            "id": str(b.get("tool_id") or f"call_{len(tool_calls)}"),
+                            "id": str(b.get("id") or f"call_{len(tool_calls)}"),
                             "type": "function",
                             "function": {
-                                "name": str(b.get("tool_name") or ""),
+                                "name": str(b.get("name") or ""),
                                 "arguments": json.dumps(
-                                    b.get("tool_input") or {}, ensure_ascii=False
+                                    b.get("input") or {}, ensure_ascii=False
                                 ),
                             },
                         }
@@ -339,6 +368,7 @@ class _OpenAIChatCaller:
         max_tokens: int | None,
         stream: bool,
     ) -> dict[str, Any]:
+        validate_anthropic_messages(messages)  # 输入同为 anthropic 风格线程
         body: dict[str, Any] = {
             "model": self.cfg.model,
             "messages": self.to_openai_messages(system, messages),

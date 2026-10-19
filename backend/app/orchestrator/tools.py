@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.schemas.contracts import TaskReport
+from app.schemas.inline import inline_refs
 from app.schemas.plan import Review
 
 _RATIONALE: dict[str, Any] = {
@@ -181,7 +182,7 @@ def control_tool_schemas(agent_slugs: list[str]) -> list[dict[str, Any]]:
                 {
                     "attempt_id": {"type": "string"},
                     "task_key": {"type": "string"},
-                    "review": Review.model_json_schema(),
+                    "review": inline_refs(Review.model_json_schema()),
                 },
                 ["review"],
             ),

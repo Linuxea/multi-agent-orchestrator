@@ -111,7 +111,7 @@ async def test_thread_translation_and_tools_payload(
             "role": "assistant",
             "content": [
                 {"type": "text", "text": "调用工具"},
-                {"type": "tool_use", "tool_id": "tu1", "tool_name": "echo", "tool_input": {"a": 1}},
+                {"type": "tool_use", "id": "tu1", "name": "echo", "input": {"a": 1}},
             ],
         },
         {

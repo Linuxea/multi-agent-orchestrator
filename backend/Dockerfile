@@ -11,12 +11,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --no-install-project
+RUN uv sync --no-dev --no-install-project --extra postgres
 
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
-RUN uv sync --no-dev
+RUN uv sync --no-dev --extra postgres
 
 EXPOSE 8000
 CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

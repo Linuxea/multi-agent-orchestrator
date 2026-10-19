@@ -55,6 +55,7 @@ RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.clarifying,
             RunStatus.awaiting_plan_approval,
             RunStatus.running,
+            RunStatus.completed,  # 无任务需求（咨询/寒暄/注册表查询）直接 finalize 答复
             RunStatus.failed,
             RunStatus.cancelled,
         }

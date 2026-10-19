@@ -381,25 +381,7 @@ class CoordinationEngine:
                     break
 
                 thread.append(
-                    {
-                        "role": "assistant",
-                        "content": [
-                            *(
-                                [{"type": "text", "text": b.text}]
-                                for b in response.blocks
-                                if b.type == "text" and b.text
-                            ),
-                            *[
-                                {
-                                    "type": "tool_use",
-                                    "id": b.tool_id,
-                                    "name": b.tool_name,
-                                    "input": b.tool_input,
-                                }
-                                for b in tool_blocks
-                            ],
-                        ],
-                    }
+                    {"role": "assistant", "content": assistant_content(response.blocks, tool_blocks)}
                 )
                 results: list[dict[str, Any]] = []
                 for block in tool_blocks:
@@ -1508,11 +1490,12 @@ class CoordinationEngine:
             failed = [t for t in tasks if t.status == TaskStatus.failed]
             skipped = [t for t in tasks if t.status == TaskStatus.skipped]
             accepted = [t for t in tasks if t.status == TaskStatus.accepted]
-            if not accepted:
+            if not accepted and tasks:
                 outcome = RunOutcome.failed
             elif failed or skipped or gaps.strip():
                 outcome = RunOutcome.partial
             else:
+                # 零任务（直接答复型需求）同样视为成功完成
                 outcome = RunOutcome.success
 
             gap_lines = [gaps] if gaps.strip() else []
@@ -1610,6 +1593,16 @@ class CoordinationEngine:
     async def reject_plan(self, run_id: str, version: int, note: str) -> None:
         async with db_session() as session:
             run = await self._require_run(session, run_id)
+            # 驳回理由落为 user 消息：主 agent 下次唤醒经 digest 时间线可见（否则模型不知要改什么）
+            session.add(
+                Message(
+                    id=new_id("msg"),
+                    session_id=run.session_id,
+                    role="user",
+                    content=f"【计划被驳回】v{version}：{note}",
+                    run_id=run.id,
+                )
+            )
             await self.events.emit(
                 session,
                 type="plan.rejected",
@@ -1629,8 +1622,10 @@ class CoordinationEngine:
             run = await self._require_run(session, run_id)
             questions = self._questions.get(run_id, {})
             qid = question_id or (list(questions.keys())[-1] if questions else None)
+            q_text = ""
             if qid is not None and qid in questions:
                 q = questions.pop(qid)
+                q_text = q.question
                 for key in q.blocking_task_keys:
                     t = await self._require_task(session, run_id, key)
                     if t.status == TaskStatus.awaiting_user:
@@ -1645,6 +1640,16 @@ class CoordinationEngine:
                     run_id=run_id,
                     payload={"question_id": qid, "answer": answer},
                 )
+            # 回答落为 user 消息：主 agent 下次唤醒经 digest 时间线可见（否则模型不知用户答了什么）
+            session.add(
+                Message(
+                    id=new_id("msg"),
+                    session_id=run.session_id,
+                    role="user",
+                    content=f"【用户回答】{'问：' + q_text + ' 答：' if q_text else '答：'}{answer}",
+                    run_id=run_id,
+                )
+            )
             if run.status == RunStatus.clarifying:
                 await transition_run(
                     session, self.events, run, RunStatus.planning,
@@ -2055,6 +2060,24 @@ class CoordinationEngine:
 
     def open_questions(self, run_id: str) -> list[PendingQuestion]:
         return list(self._questions.get(run_id, {}).values())
+
+
+def assistant_content(
+    blocks: list[Any], tool_blocks: list[Any]
+) -> list[dict[str, Any]]:
+    """组装 assistant 回发 content（wire 格式 block 数组）。
+
+    历史缺陷：生成器产出 `[block]` 列表导致 * 解包后 content 出现
+    列表套列表（text+tool_use 混合轮触发，端点 422）。
+    本函数是唯一组装入口，形状由 tests/unit/test_model_client_shape.py 焊死。
+    """
+    return [
+        *({"type": "text", "text": b.text} for b in blocks if b.type == "text" and b.text),
+        *(
+            {"type": "tool_use", "id": b.tool_id, "name": b.tool_name, "input": b.tool_input}
+            for b in tool_blocks
+        ),
+    ]
 
 
 def _check_acyclic(specs: list[PlanTaskSpec]) -> None:

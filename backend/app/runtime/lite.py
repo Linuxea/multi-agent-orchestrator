@@ -33,6 +33,7 @@ from app.runtime.types import (
 )
 from app.schemas.common import Usage
 from app.schemas.contracts import TaskReport
+from app.schemas.inline import inline_refs
 
 SUBMIT_REPORT_TOOL: dict[str, Any] = {
     "name": "submit_report",
@@ -40,7 +41,7 @@ SUBMIT_REPORT_TOOL: dict[str, Any] = {
         "提交结构化回报并结束任务。这是结束任务的唯一方式。"
         "status 可选 done/partial/blocked/failed；blocked/failed 必须附 blocker。"
     ),
-    "input_schema": TaskReport.model_json_schema(),
+    "input_schema": inline_refs(TaskReport.model_json_schema()),
 }
 
 _BUDGET_REMINDER_RATIO = 0.8
@@ -159,12 +160,12 @@ class LiteExecutor:
                     )
                     continue
 
-                # 记录 assistant 轮（含工具调用）
+                # 记录 assistant 轮（含工具调用）；text 为空时不产生 None 元素（端点会拒收）
                 messages.append(
                     {
                         "role": "assistant",
                         "content": [
-                            {"type": "text", "text": text} if text else None,
+                            *([{"type": "text", "text": text}] if text else []),
                             *[
                                 {
                                     "type": "tool_use",

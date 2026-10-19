@@ -40,6 +40,7 @@ from app.runtime.types import (
 )
 from app.schemas.common import Usage
 from app.schemas.contracts import TaskReport
+from app.schemas.inline import inline_refs
 
 _sdk_module: Any = None
 
@@ -209,7 +210,7 @@ class SdkExecutor:
         submit_tool = sdk.tool(
             name="submit_report",
             description=SUBMIT_REPORT_DESCRIPTION,
-            input_schema=TaskReport.model_json_schema(),
+            input_schema=inline_refs(TaskReport.model_json_schema()),
         )(_submit_report)
 
         mcp_servers: dict[str, Any] = {

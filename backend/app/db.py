@@ -29,11 +29,13 @@ def get_engine() -> AsyncEngine:
     global _ENGINE
     if _ENGINE is None:
         cfg = get_config()
+        # aiosqlite 用 timeout（busy timeout，秒）；psycopg 用 libpq 的 connect_timeout
+        is_sqlite = cfg.database_url.startswith("sqlite")
         _ENGINE = create_async_engine(
             cfg.database_url,
             echo=False,
             json_serializer=_default_json_serializer,
-            connect_args={"timeout": 30},
+            connect_args={"timeout": 30} if is_sqlite else {"connect_timeout": 30},
         )
         if _ENGINE.dialect.name == "sqlite":
 
