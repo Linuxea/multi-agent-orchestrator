@@ -247,13 +247,18 @@ function QuestionCard({
   const [text, setText] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const submit = async (answer: string) => {
     if (!answer.trim() || busy) return;
     setBusy(true);
+    setError("");
     try {
       await runApi.answer(runId, answer.trim(), questionId);
       setSent(true);
+    } catch (e) {
+      // 此前无 catch：提交失败静默（按钮恢复可点、无任何提示），用户以为点了没反应
+      setError(e instanceof Error ? e.message : "提交失败，请重试");
     } finally {
       setBusy(false);
     }
@@ -277,6 +282,7 @@ function QuestionCard({
         <span className="eyebrow">协调者提问</span>
       </div>
       <p className="st-q">{question}</p>
+      {error ? <p className="st-q-error" role="alert">{error}</p> : null}
       {options.length > 0 ? (
         <div className="st-options">
           {options.map((o) => (

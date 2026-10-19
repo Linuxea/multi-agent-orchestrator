@@ -716,6 +716,13 @@ class CoordinationEngine:
 
         async with db_session() as session:
             run = await self._require_run(session, ws.run_id)
+            # 审批门槛：计划等待用户确认期间禁止修订——否则模型可用「修订刷新任务状态」
+            # 绕过审批解锁任务并派发（真实事故：用户会话内说"确认"被模型误解，
+            # 经 revise_plan 解锁任务后 dispatch，run 却停在待审批，调度器不动，形同卡死）
+            if run.status == RunStatus.awaiting_plan_approval:
+                raise ControlToolError(
+                    "计划正在等待用户确认，不能修订；请等待用户批准或驳回后再调整"
+                )
             tasks = {t.key: t for t in await self._run_tasks(session, ws.run_id)}
             settings = await self.settings.get(session)
 
@@ -891,6 +898,10 @@ class CoordinationEngine:
         task_key = str(args.get("task_key") or "")
         async with db_session() as session:
             run = await self._require_run(session, ws.run_id)
+            # 审批门槛：计划等待用户确认期间禁止派发（配合 revise_plan 同款门槛，
+            # 否则任务排队而调度器不启动，形同卡死）
+            if run.status == RunStatus.awaiting_plan_approval:
+                raise ControlToolError("计划正在等待用户确认，不能派发任务")
             if run.id in self._budget_exceeded:
                 raise ControlToolError("运行预算已耗尽：请用 finalize 汇总现有结果或上报用户追加预算")
             task = await self._require_task(session, ws.run_id, task_key)
